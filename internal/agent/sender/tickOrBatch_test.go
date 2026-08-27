@@ -7,9 +7,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/go-cmp/cmp"
 	"github.com/isyuah/gline/internal/logentry"
-	"github.com/isyuah/testx"
 )
 
 type MockDestination struct {
@@ -57,7 +56,9 @@ func TestNewTickOrBatchSender_Run_BatchSizeAndTickAndCloseFlush(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		testx.Assert(t, md.CountRecord).Equal([]int{5, 2, 3})
+		if diff := cmp.Diff([]int{5, 2, 3}, md.CountRecord); diff != "" {
+			t.Fatalf("batch sizes mismatch (-want +got):\n%s", diff)
+		}
 	})
 }
 
@@ -81,7 +82,9 @@ func TestNewTickOrBatchSender_Run_Cancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal("expected context.Canceled error but got:", err)
 	}
-	testx.Assert(t, md.CountRecord).Equal(nil)
+	if md.CountRecord != nil {
+		t.Fatalf("CountRecord = %v, want nil", md.CountRecord)
+	}
 }
 
 func TestNewTickOrBatchSender_Run_Error(t *testing.T) {
@@ -101,6 +104,8 @@ func TestNewTickOrBatchSender_Run_Error(t *testing.T) {
 		src <- logentry.LogEntry{}
 
 		err := <-done
-		testx.Assert(t, err).Equal(testErr, cmpopts.EquateErrors())
+		if !errors.Is(err, testErr) {
+			t.Fatalf("Run() error = %v, want %v", err, testErr)
+		}
 	})
 }

@@ -1,6 +1,7 @@
 package build
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -10,10 +11,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func Agent(cfg config.GlineAgentConfig) (agent.Agent, error) {
+func Agent(cfg config.GlineAgentConfig) (agent.Runtime, error) {
 	err := cfg.Validate()
 	if err != nil {
-		return agent.Agent{}, err
+		return nil, err
 	}
 
 	// Logger
@@ -23,7 +24,7 @@ func Agent(cfg config.GlineAgentConfig) (agent.Agent, error) {
 	}
 	file, err := os.OpenFile(cfg.Agent.Log.File, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		return agent.Agent{}, fmt.Errorf("failed to open log file: %w", err)
+		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
 	writer := zerolog.SyncWriter(zerolog.MultiLevelWriter(consoleWriter, file))
@@ -45,13 +46,20 @@ func Agent(cfg config.GlineAgentConfig) (agent.Agent, error) {
 		level = zerolog.DebugLevel
 	}
 	rootLogger := zerolog.New(writer).Level(level).With().Timestamp().Logger()
+	if cfg.Sender.Type == "reliable" {
+		runtime, err := ReliableAgent(cfg, rootLogger)
+		if err != nil {
+			return nil, errors.Join(err, file.Close())
+		}
+		return agent.WithCloser(runtime, file), nil
+	}
 
 	// Pipelines
 	pipelines := make([]agent.SourcePipeline, 0, len(cfg.Pipelines))
 	for _, p := range cfg.Pipelines {
 		pipeline, err := Pipeline(p)
 		if err != nil {
-			return agent.Agent{}, err
+			return nil, errors.Join(err, file.Close())
 		}
 		pipelines = append(pipelines, pipeline)
 	}
@@ -59,12 +67,13 @@ func Agent(cfg config.GlineAgentConfig) (agent.Agent, error) {
 	// Sender
 	sender, err := Sender(cfg.Sender)
 	if err != nil {
-		return agent.Agent{}, err
+		return nil, errors.Join(err, file.Close())
 	}
 
-	return agent.Agent{
+	runtime := &agent.Agent{
 		Logger:    rootLogger,
 		Pipelines: pipelines,
 		Sender:    sender,
-	}, nil
+	}
+	return agent.WithCloser(runtime, file), nil
 }

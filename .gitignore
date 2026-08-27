@@ -21,6 +21,10 @@
 agent.log
 app.log
 
+# Local Agent runtime state
+/data/
+*.wal
+
 # IDE / editor
 .idea/
 .vscode/
@@ -33,3 +37,11 @@ Thumbs.db
 # Environment / secrets
 .env
 .env.local
+
+# Frontend dependencies / output
+web/node_modules/
+web/dist/
+web/coverage/
+
+# Local PostgreSQL / Compose state
+.postgres/

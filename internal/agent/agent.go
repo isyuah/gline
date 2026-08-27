@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"runtime/debug"
 	"sync"
 
@@ -10,6 +11,24 @@ import (
 	"github.com/isyuah/gline/internal/logentry"
 	"github.com/rs/zerolog"
 )
+
+type Runtime interface {
+	Run(context.Context) error
+}
+
+type managedRuntime struct {
+	runtime Runtime
+	closer  io.Closer
+}
+
+func WithCloser(runtime Runtime, closer io.Closer) Runtime {
+	return &managedRuntime{runtime: runtime, closer: closer}
+}
+
+func (r *managedRuntime) Run(ctx context.Context) error {
+	runErr := r.runtime.Run(ctx)
+	return errors.Join(runErr, r.closer.Close())
+}
 
 type Agent struct {
 	Logger zerolog.Logger

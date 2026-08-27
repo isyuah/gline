@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/goccy/go-yaml"
-	"github.com/isyuah/testx"
 )
 
 func Test_Parse(t *testing.T) {
@@ -43,9 +42,15 @@ sender:
 		t.Fatal(err)
 	}
 
-	testx.Assert(t, cfg.Version).Equal(1)
-	testx.Assert(t, len(cfg.Pipelines)).Equal(1)
-	testx.Assert(t, cfg.Pipelines[0].Source.Type).Equal("file")
+	if cfg.Version != 1 {
+		t.Fatalf("Version = %d, want 1", cfg.Version)
+	}
+	if len(cfg.Pipelines) != 1 {
+		t.Fatalf("len(Pipelines) = %d, want 1", len(cfg.Pipelines))
+	}
+	if cfg.Pipelines[0].Source.Type != "file" {
+		t.Fatalf("Source.Type = %q, want file", cfg.Pipelines[0].Source.Type)
+	}
 
 	var params FileSourceParams
 	if err := yaml.Unmarshal(cfg.Pipelines[0].Source.Params, &params); err != nil {

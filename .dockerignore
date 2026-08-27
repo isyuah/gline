@@ -1,0 +1,15 @@
+.git
+.idea
+.vscode
+.gocache
+.gotmp
+.env
+.env.local
+.postgres
+bin
+dist
+docs
+web/node_modules
+web/dist
+web/coverage
+*.log

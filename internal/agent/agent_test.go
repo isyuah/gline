@@ -9,10 +9,10 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/isyuah/gline/internal/agent/source"
 	"github.com/isyuah/gline/internal/logentry"
-	"github.com/isyuah/testx"
 	"github.com/rs/zerolog"
 )
 
@@ -135,7 +135,7 @@ func TestAgent_PipelineErrorDoesNotStopOtherPipelines(t *testing.T) {
 			t.Fatalf("unexpected Agent error: %v", err)
 		}
 
-		testx.Assert(t, sender.Entries).Equal([]logentry.LogEntry{
+		wantEntries := []logentry.LogEntry{
 			{
 				Message: "before-failure",
 				Service: "service-a",
@@ -146,7 +146,10 @@ func TestAgent_PipelineErrorDoesNotStopOtherPipelines(t *testing.T) {
 				Service: "service-b",
 				Host:    "host-b",
 			},
-		})
+		}
+		if diff := cmp.Diff(wantEntries, sender.Entries); diff != "" {
+			t.Fatalf("sender entries mismatch (-want +got):\n%s", diff)
+		}
 	})
 }
 
@@ -198,21 +201,30 @@ func TestAgent_PipelinePanicDoesNotStopOtherPipelines(t *testing.T) {
 			t.Fatalf("unexpected Agent error: %v", err)
 		}
 
-		testx.Assert(t, sender.Entries).Equal([]logentry.LogEntry{
+		wantEntries := []logentry.LogEntry{
 			{
 				Message: "still running",
 				Service: "service-b",
 				Host:    "host-b",
 			},
-		})
+		}
+		if diff := cmp.Diff(wantEntries, sender.Entries); diff != "" {
+			t.Fatalf("sender entries mismatch (-want +got):\n%s", diff)
+		}
 
 		var event map[string]any
 		if err := json.Unmarshal(logs.Bytes(), &event); err != nil {
 			t.Fatal(err)
 		}
-		testx.Assert(t, event["level"]).Equal("fatal")
-		testx.Assert(t, event["panic"]).Equal("parser exploded")
-		testx.Assert(t, event["service"]).Equal("service-a")
+		if event["level"] != "fatal" {
+			t.Fatalf("level = %v, want fatal", event["level"])
+		}
+		if event["panic"] != "parser exploded" {
+			t.Fatalf("panic = %v, want parser exploded", event["panic"])
+		}
+		if event["service"] != "service-a" {
+			t.Fatalf("service = %v, want service-a", event["service"])
+		}
 
 		stack, ok := event["stack"].(string)
 		if !ok {
@@ -221,8 +233,12 @@ func TestAgent_PipelinePanicDoesNotStopOtherPipelines(t *testing.T) {
 		if !strings.Contains(stack, "panicParser.Parse") {
 			t.Fatalf("stack does not contain panic origin: %s", stack)
 		}
-		testx.Assert(t, event["component"]).Equal("pipeline")
-		testx.Assert(t, event["host"]).Equal("host-a")
+		if event["component"] != "pipeline" {
+			t.Fatalf("component = %v, want pipeline", event["component"])
+		}
+		if event["host"] != "host-a" {
+			t.Fatalf("host = %v, want host-a", event["host"])
+		}
 	})
 }
 
@@ -285,27 +301,35 @@ func TestAgent_SenderErrorStopsPipelines(t *testing.T) {
 		err := a.Run(t.Context())
 
 		// Agent 最终应该返回 Sender 的错误
-		testx.Assert(t, err).
-			Equal(senderErr, cmpopts.EquateErrors())
+		if !errors.Is(err, senderErr) {
+			t.Fatalf("Agent.Run() error = %v, want %v", err, senderErr)
+		}
 
 		// Sender 确实收到过第一条日志
-		testx.Assert(t, sender.Entries).Equal(
-			[]logentry.LogEntry{
-				{
-					Message: "hello",
-					Service: "test-service",
-					Host:    "test-host",
-				},
+		wantEntries := []logentry.LogEntry{
+			{
+				Message: "hello",
+				Service: "test-service",
+				Host:    "test-host",
 			},
-		)
+		}
+		if diff := cmp.Diff(wantEntries, sender.Entries); diff != "" {
+			t.Fatalf("sender entries mismatch (-want +got):\n%s", diff)
+		}
 
 		var event map[string]any
 		if err := json.Unmarshal(logs.Bytes(), &event); err != nil {
 			t.Fatal(err)
 		}
-		testx.Assert(t, event["level"]).Equal("error")
-		testx.Assert(t, event["component"]).Equal("sender")
-		testx.Assert(t, event["error"]).Equal("sender error")
+		if event["level"] != "error" {
+			t.Fatalf("level = %v, want error", event["level"])
+		}
+		if event["component"] != "sender" {
+			t.Fatalf("component = %v, want sender", event["component"])
+		}
+		if event["error"] != "sender error" {
+			t.Fatalf("error = %v, want sender error", event["error"])
+		}
 	})
 }
 
@@ -361,10 +385,11 @@ func TestAgent_ContextCancelDrainsEntries(t *testing.T) {
 
 		err := <-done
 
-		testx.Assert(t, err).
-			Equal(context.Canceled, cmpopts.EquateErrors())
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Agent.Run() error = %v, want %v", err, context.Canceled)
+		}
 
-		testx.Assert(t, sender.Entries).Equal([]logentry.LogEntry{
+		wantEntries := []logentry.LogEntry{
 			{
 				Message: "one",
 				Service: "test-service",
@@ -380,7 +405,10 @@ func TestAgent_ContextCancelDrainsEntries(t *testing.T) {
 				Service: "test-service",
 				Host:    "test-host",
 			},
-		})
+		}
+		if diff := cmp.Diff(wantEntries, sender.Entries); diff != "" {
+			t.Fatalf("sender entries mismatch (-want +got):\n%s", diff)
+		}
 	})
 }
 
@@ -440,26 +468,29 @@ func TestAgent_MultiplePipelines(t *testing.T) {
 
 		err := <-done
 
-		testx.Assert(t, err).
-			Equal(context.Canceled, cmpopts.EquateErrors())
-		testx.Assert(t, sender.Entries).Equal(
-			[]logentry.LogEntry{
-				{
-					Message: "from-a",
-					Host:    "host-a",
-					Service: "service-a",
-				},
-				{
-					Message: "from-b",
-					Host:    "host-b",
-					Service: "service-b",
-				},
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Agent.Run() error = %v, want %v", err, context.Canceled)
+		}
+		wantEntries := []logentry.LogEntry{
+			{
+				Message: "from-a",
+				Host:    "host-a",
+				Service: "service-a",
 			},
+			{
+				Message: "from-b",
+				Host:    "host-b",
+				Service: "service-b",
+			},
+		}
+		if diff := cmp.Diff(wantEntries, sender.Entries,
 			cmpopts.SortSlices(
 				func(a, b logentry.LogEntry) bool {
 					return a.Message < b.Message
 				},
 			),
-		)
+		); diff != "" {
+			t.Fatalf("sender entries mismatch (-want +got):\n%s", diff)
+		}
 	})
 }

@@ -15,7 +15,9 @@ type AgentLogConfig struct {
 }
 
 type AgentConfig struct {
-	Log AgentLogConfig `yaml:"log"`
+	ID      string         `yaml:"id"`
+	Version string         `yaml:"version"`
+	Log     AgentLogConfig `yaml:"log"`
 }
 
 type PipelineSourceConfig struct {

@@ -9,9 +9,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/isyuah/gline/internal/agent/source"
 	"github.com/isyuah/gline/internal/logentry"
-	"github.com/isyuah/testx"
 	"github.com/rs/zerolog"
 )
 
@@ -63,8 +63,7 @@ func TestSourcePipeline_ParserErrorProducesUnknownAndContinues(t *testing.T) {
 	for entry := range entries {
 		results = append(results, entry)
 	}
-	testx.Assert(t, len(results)).Equal(2)
-	testx.Assert(t, results).Equal([]logentry.LogEntry{
+	wantEntries := []logentry.LogEntry{
 		{
 			Timestamp: observedAt,
 			Level:     logentry.LevelUnknown,
@@ -79,15 +78,22 @@ func TestSourcePipeline_ParserErrorProducesUnknownAndContinues(t *testing.T) {
 			Service:   "orders",
 			Host:      "host-1",
 		},
-	})
+	}
+	if diff := cmp.Diff(wantEntries, results); diff != "" {
+		t.Fatalf("pipeline entries mismatch (-want +got):\n%s", diff)
+	}
 	decoder := json.NewDecoder(&logs)
 
 	var event map[string]any
 	if err := decoder.Decode(&event); err != nil {
 		t.Fatal(err)
 	}
-	testx.Assert(t, event["level"]).Equal("warn")
-	testx.Assert(t, event["error"]).Equal("invalid record")
+	if event["level"] != "warn" {
+		t.Fatalf("level = %v, want warn", event["level"])
+	}
+	if event["error"] != "invalid record" {
+		t.Fatalf("error = %v, want invalid record", event["error"])
+	}
 }
 
 func TestSourcePipeline_TemporaryError(t *testing.T) {
@@ -122,7 +128,9 @@ func TestSourcePipeline_TemporaryError(t *testing.T) {
 		}
 
 		got := <-entries
-		testx.Assert(t, got.Message).Equal("recovered")
+		if got.Message != "recovered" {
+			t.Fatalf("message = %q, want recovered", got.Message)
+		}
 	})
 }
 
@@ -173,6 +181,10 @@ func TestSourcePipeline_FatalErrorStopsPipeline(t *testing.T) {
 	if err := json.Unmarshal(logs.Bytes(), &event); err != nil {
 		t.Fatal(err)
 	}
-	testx.Assert(t, event["level"]).Equal("error")
-	testx.Assert(t, event["error"]).Equal("source is unusable")
+	if event["level"] != "error" {
+		t.Fatalf("level = %v, want error", event["level"])
+	}
+	if event["error"] != "source is unusable" {
+		t.Fatalf("error = %v, want source is unusable", event["error"])
+	}
 }

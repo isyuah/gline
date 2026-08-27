@@ -39,5 +39,39 @@ func (cfg GlineAgentConfig) Validate() error {
 	if strings.TrimSpace(cfg.Sender.Destination.Type) == "" {
 		return fmt.Errorf("sender destination type is empty")
 	}
+	if cfg.Sender.Type == "reliable" {
+		if !validUUID(cfg.Agent.ID) {
+			return fmt.Errorf("agent id must be a UUID in reliable mode")
+		}
+		if cfg.Sender.Destination.Type != "gline" {
+			return fmt.Errorf("reliable sender requires gline destination")
+		}
+		for index, pipeline := range cfg.Pipelines {
+			if !validUUID(pipeline.ID) {
+				return fmt.Errorf("pipeline[%d] id must be a UUID in reliable mode", index)
+			}
+			if strings.TrimSpace(pipeline.Host) == "" {
+				return fmt.Errorf("pipeline[%d] host is empty in reliable mode", index)
+			}
+			if pipeline.Source.Type != "file" {
+				return fmt.Errorf("pipeline[%d] reliable mode requires file source", index)
+			}
+		}
+	}
 	return nil
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for index, char := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
