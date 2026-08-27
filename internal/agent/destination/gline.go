@@ -36,7 +36,10 @@ func (g GlineDest) SendEntries(ctx context.Context, entries []logentry.LogEntry)
 	if err != nil {
 		return err
 	}
-	req, _ := http.NewRequestWithContext(ctx, "POST", g.URL, body)
+	req, err := http.NewRequestWithContext(ctx, "POST", g.URL, body)
+	if err != nil {
+		return fmt.Errorf("error creating request: %s", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+g.Token)
 	resp, err := g.client.Do(req)

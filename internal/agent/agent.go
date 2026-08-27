@@ -28,7 +28,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	entries := make(chan logentry.LogEntry, 10000)
 
 	for _, pipeline := range a.Pipelines {
-		pipeline.Logger = a.Logger.With().Str("component", "pipeline").Str("service", pipeline.Service).Str("host", pipeline.Host).Logger()
+		pipeline.Logger = a.Logger.With().Str("component", "pipeline").Str("pipeline", pipeline.ID).Str("service", pipeline.Service).Str("host", pipeline.Host).Logger()
 		pipelineWg.Go(func() {
 			defer func() {
 				if err := recover(); err != nil {

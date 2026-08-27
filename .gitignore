@@ -1,0 +1,35 @@
+# Binaries / build output
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go build/test cache accidentally generated in repo
+/.gocache/
+/.gotmp/
+
+# Local agent configuration (the real config is local-only)
+.glineconf
+
+# Logs
+*.log
+agent.log
+app.log
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.local

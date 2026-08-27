@@ -19,6 +19,7 @@ func Pipeline(cfg config.PipelineConfig) (agent.SourcePipeline, error) {
 	return agent.SourcePipeline{
 		Source:  src,
 		Parser:  parser,
+		ID:      cfg.ID,
 		Service: cfg.Service,
 		Host:    cfg.Host,
 	}, nil

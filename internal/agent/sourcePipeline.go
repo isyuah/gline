@@ -15,6 +15,7 @@ import (
 type SourcePipeline struct {
 	Logger zerolog.Logger
 
+	ID      string
 	Source  source.Source
 	Parser  parser.Parser
 	Service string

@@ -1,0 +1,34 @@
+version: 1
+
+agent:
+  log:
+    level: info
+    file: ./agent.log
+
+pipelines:
+  - id: app
+    service: app
+    host: localhost
+    source:
+      type: file
+      params:
+        path: ./app.log
+    parser:
+      type: string_line
+      params: {}
+
+sender:
+  type: tick_or_batch
+  params:
+    batch_size: 100
+    flush_interval: 5s
+  destination:
+    type: terminal
+    params: {}
+
+# 如果要把日志发到 gline server，可以把上面的 destination 替换为：
+#   destination:
+#     type: gline
+#     params:
+#       url: http://127.0.0.1:8080/api/v1/entries/upload
+#       token: change-me
