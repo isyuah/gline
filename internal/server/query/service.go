@@ -26,6 +26,8 @@ var (
 	ErrInvalidLimit     = errors.New("invalid query limit")
 	ErrInvalidFilter    = errors.New("invalid query filter")
 	ErrInvalidCursor    = errors.New("invalid query cursor")
+	ErrCapacityLimited  = errors.New("query capacity exhausted")
+	ErrExecutionTimeout = errors.New("query execution timed out")
 )
 
 type ProjectRepository interface {
@@ -120,6 +122,12 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 			return
 		}
 		outcome := "rejected"
+		if errors.Is(err, ErrCapacityLimited) {
+			outcome = "rate_limited"
+		}
+		if errors.Is(err, ErrExecutionTimeout) {
+			outcome = "timeout"
+		}
 		if err == nil {
 			outcome = "success"
 		}
@@ -136,7 +144,7 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 	}
 	project, err := s.projects.Get(queryCtx, principal.ProjectID)
 	if err != nil {
-		return Page{}, err
+		return Page{}, classifyExecutionError(err)
 	}
 	if err := project.CanQuery(); err != nil {
 		return Page{}, err
@@ -154,7 +162,7 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 	if s.limiter != nil {
 		release, err := s.limiter.Acquire(queryCtx, principal.ProjectID)
 		if err != nil {
-			return Page{}, err
+			return Page{}, classifyExecutionError(err)
 		}
 		if release == nil {
 			return Page{}, errors.New("query limiter returned a nil release function")
@@ -163,7 +171,7 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 	}
 	page, err := s.entries.List(queryCtx, query)
 	if err != nil {
-		return Page{}, err
+		return Page{}, classifyExecutionError(err)
 	}
 	result = Page{Entries: page.Entries}
 	if page.Next != nil {
@@ -173,6 +181,13 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 		}
 	}
 	return result, nil
+}
+
+func classifyExecutionError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrExecutionTimeout, err)
+	}
+	return err
 }
 
 func filterShape(params Params) string {

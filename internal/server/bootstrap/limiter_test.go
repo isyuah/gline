@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/isyuah/gline/internal/domain"
+	"github.com/isyuah/gline/internal/server/query"
 )
 
 func TestProjectLimiterIsolatesCapacityAndCleansCanceledWaiters(t *testing.T) {
@@ -21,6 +22,12 @@ func TestProjectLimiterIsolatesCapacityAndCleansCanceledWaiters(t *testing.T) {
 	cancel()
 	if _, err := limiter.Acquire(canceled, projectA); !errors.Is(err, context.Canceled) {
 		t.Fatalf("second project A acquire error=%v", err)
+	}
+	if _, err := limiter.Acquire(context.Background(), projectA); !errors.Is(err, query.ErrCapacityLimited) {
+		t.Fatalf("full project A acquire error=%v, want capacity error", err)
+	}
+	if _, err := limiter.Acquire(context.Background(), projectA); !errors.Is(err, query.ErrCapacityLimited) {
+		t.Fatalf("full project A acquire error=%v, want capacity error", err)
 	}
 
 	releaseB, err := limiter.Acquire(context.Background(), projectB)

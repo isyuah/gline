@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/isyuah/gline/internal/domain"
+	"github.com/isyuah/gline/internal/server/query"
 )
 
 type projectLimiter struct {
@@ -23,6 +24,9 @@ func newProjectLimiter(capacity int) *projectLimiter {
 }
 
 func (l *projectLimiter) Acquire(ctx context.Context, projectID domain.ProjectID) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	l.mu.Lock()
 	semaphore := l.projects[projectID]
 	if semaphore == nil {
@@ -44,6 +48,9 @@ func (l *projectLimiter) Acquire(ctx context.Context, projectID domain.ProjectID
 	case <-ctx.Done():
 		l.releaseUser(projectID, semaphore)
 		return nil, ctx.Err()
+	default:
+		l.releaseUser(projectID, semaphore)
+		return nil, query.ErrCapacityLimited
 	}
 }
 

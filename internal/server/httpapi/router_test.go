@@ -359,6 +359,32 @@ func TestEntryRouteMapsBoundedQueryParameters(t *testing.T) {
 	}
 }
 
+func TestEntryRouteMapsQueryCapacityToRetryable429(t *testing.T) {
+	queries := &fakeQuery{err: query.ErrCapacityLimited}
+	dependencies := testDependencies(testPrincipal(domain.ScopeQuery))
+	dependencies.Query = queries
+	handler := testRouter(t, dependencies)
+	response := perform(handler, http.MethodGet,
+		"/api/v1/entries?from=2026-08-24T00:00:00Z&to=2026-08-24T01:00:00Z", "api-key", "")
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" ||
+		!strings.Contains(response.Body.String(), `"code":"query_capacity_limited"`) {
+		t.Fatalf("status=%d retry-after=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+	}
+}
+
+func TestEntryRouteMapsQueryTimeoutToStable504(t *testing.T) {
+	queries := &fakeQuery{err: query.ErrExecutionTimeout}
+	dependencies := testDependencies(testPrincipal(domain.ScopeQuery))
+	dependencies.Query = queries
+	handler := testRouter(t, dependencies)
+	response := perform(handler, http.MethodGet,
+		"/api/v1/entries?from=2026-08-24T00:00:00Z&to=2026-08-24T01:00:00Z", "api-key", "")
+	if response.Code != http.StatusGatewayTimeout || response.Header().Get("Retry-After") != "" ||
+		!strings.Contains(response.Body.String(), `"code":"query_timeout"`) {
+		t.Fatalf("status=%d retry-after=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+	}
+}
+
 func TestSensitiveStorageFieldsAreNotSerialized(t *testing.T) {
 	dependencies := testDependencies(testPrincipal(domain.ScopeKeyManage, domain.ScopeQuarantineRead))
 	dependencies.Keys = fakeKeys{keys: []domain.APIKey{

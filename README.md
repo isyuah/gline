@@ -21,7 +21,8 @@ collection of unused infrastructure.
 - PostgreSQL migrations, composite tenant foreign keys, usage buckets and audit
   events.
 - Time-bounded log search with stable keyset cursors and per-project concurrency
-  limiting.
+  limiting; exhausted local capacity fails fast with 429, while execution
+  deadlines return a distinct 504 `query_timeout`.
 - Default and configurable retention, bounded cleanup and durable Agent-local
   quarantine with explicit inspection/discard commands.
 - Server-side Quarantine storage, lease recovery and replay/discard operations

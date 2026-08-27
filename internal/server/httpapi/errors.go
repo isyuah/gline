@@ -50,6 +50,8 @@ func writeError(c *gin.Context, err error) {
 			seconds = 1
 		}
 		c.Header("Retry-After", strconv.Itoa(seconds))
+	} else if errors.Is(err, query.ErrCapacityLimited) {
+		c.Header("Retry-After", "1")
 	}
 	errorBody := gin.H{"code": mapped.Code, "message": mapped.Message, "request_id": requestID(c)}
 	if mapped.Details != nil {
@@ -92,6 +94,10 @@ func mapError(err error) *apiError {
 		return &apiError{Status: http.StatusRequestEntityTooLarge, Code: "admission_capacity_exceeded", Message: "batch cost exceeds the configured ingest capacity", Cause: err}
 	case errors.Is(err, admission.ErrLimited):
 		return &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "ingest capacity is temporarily exhausted", Cause: err}
+	case errors.Is(err, query.ErrCapacityLimited):
+		return &apiError{Status: http.StatusTooManyRequests, Code: "query_capacity_limited", Message: "query capacity is temporarily exhausted", Cause: err}
+	case errors.Is(err, query.ErrExecutionTimeout):
+		return &apiError{Status: http.StatusGatewayTimeout, Code: "query_timeout", Message: "query execution exceeded its time budget", Cause: err}
 	case errors.Is(err, ingestv1.ErrUnsupportedVersion):
 		return &apiError{Status: http.StatusUnprocessableEntity, Code: "unsupported_protocol", Message: "ingest protocol version is not supported", Cause: err}
 	case errors.Is(err, ingestv1.ErrInvalidJSON), errors.Is(err, ingestv1.ErrTrailingJSON):

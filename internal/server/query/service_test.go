@@ -25,6 +25,13 @@ type entries struct {
 	hasDeadline bool
 }
 
+type blockingEntries struct{}
+
+func (blockingEntries) List(ctx context.Context, _ domain.EntryQuery) (domain.EntryPage, error) {
+	<-ctx.Done()
+	return domain.EntryPage{}, ctx.Err()
+}
+
 func (r *entries) List(ctx context.Context, query domain.EntryQuery) (domain.EntryPage, error) {
 	r.queries = append(r.queries, query)
 	r.deadline, r.hasDeadline = ctx.Deadline()
@@ -34,11 +41,24 @@ func (r *entries) List(ctx context.Context, query domain.EntryQuery) (domain.Ent
 	return domain.EntryPage{Entries: []domain.Entry{{ID: 5}}, Next: &domain.EntryCursor{ObservedAt: query.From.Add(time.Minute), ID: 5}}, nil
 }
 
-type limiter struct{ acquired, released int }
+type limiter struct {
+	acquired int
+	released int
+	err      error
+}
 
 func (l *limiter) Acquire(context.Context, domain.ProjectID) (func(), error) {
 	l.acquired++
+	if l.err != nil {
+		return nil, l.err
+	}
 	return func() { l.released++ }, nil
+}
+
+type queryObserver struct{ result string }
+
+func (o *queryObserver) ObserveQuery(result, _ string, _ int, _ time.Duration) {
+	o.result = result
 }
 
 func TestSearchBindsProjectAndCursorToNormalizedFilters(t *testing.T) {
@@ -123,6 +143,40 @@ func TestSearchBoundsRepositoryExecutionAndPreservesShorterClientDeadline(t *tes
 			t.Fatalf("repository deadline = %v, want client deadline %v", repository.deadline, clientDeadline)
 		}
 	})
+}
+
+func TestSearchClassifiesExecutionDeadline(t *testing.T) {
+	config := DefaultConfig()
+	config.ExecutionTimeout = time.Millisecond
+	observer := &queryObserver{}
+	service, err := NewService(projects{}, blockingEntries{}, nil, []byte("0123456789abcdef0123456789abcdef"), config, WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Search(t.Context(), queryPrincipal(), Params{
+		From: "2026-08-24T00:00:00Z", To: "2026-08-24T01:00:00Z",
+	})
+	if !errors.Is(err, ErrExecutionTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if observer.result != "timeout" {
+		t.Fatalf("observer result = %q", observer.result)
+	}
+}
+
+func TestSearchClassifiesCapacityRejection(t *testing.T) {
+	observer := &queryObserver{}
+	limit := &limiter{err: ErrCapacityLimited}
+	service, err := NewService(projects{}, &entries{}, limit, []byte("0123456789abcdef0123456789abcdef"), DefaultConfig(), WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Search(t.Context(), queryPrincipal(), Params{
+		From: "2026-08-24T00:00:00Z", To: "2026-08-24T01:00:00Z",
+	})
+	if !errors.Is(err, ErrCapacityLimited) || observer.result != "rate_limited" {
+		t.Fatalf("Search() error = %v, observer result = %q", err, observer.result)
+	}
 }
 
 func queryPrincipal() serverauth.Principal {

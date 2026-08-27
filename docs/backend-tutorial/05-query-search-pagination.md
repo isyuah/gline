@@ -143,6 +143,17 @@ type QueryLimiter interface {
 
 获取不到槽位时返回 429，并设置合理的 `Retry-After`。release 必须通过 `defer` 保证，包含 decode、repository 和 response 写入的全路径。
 
+当前源码的 `projectLimiter` 采用 fail-fast 语义：同一 Project 已占满
+`GLINE_QUERY_CONCURRENCY` 时立即返回 `query_capacity_limited`、HTTP 429 和
+`Retry-After: 1`，而不是在 semaphore 队列中等到整个查询 deadline。这样调用者能
+区分“本实例暂时没有查询槽位”和“数据库执行本身超时”。不同 Project 使用独立
+semaphore，空闲后会移除状态；它与 Ingest Admission 一样仍是单实例预算，多副本
+时不构成全局强配额。
+
+执行超时单独映射为 HTTP 504 与稳定错误码 `query_timeout`，并在 Query 指标中记为
+`result="timeout"`；它不带 `Retry-After`，因为调用者应先缩小时间范围、过滤条件或
+检查数据库状态，不能把固定一秒重试当作一定能成功的承诺。
+
 ## 4. Keyset Pagination
 
 ### 4.1 为什么不用 OFFSET

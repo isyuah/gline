@@ -41,6 +41,10 @@ Updated: 2026-08-27
   retry timing and the Agent keeps the same batch; accepted batches commit
   usage while duplicate/failed transactions refund reservations. Limits are
   explicitly single-instance, not a global multi-replica quota.
+- Project query concurrency is fail-fast: a full local semaphore returns 429
+  with `Retry-After` instead of waiting until the query deadline and surfacing
+  an ambiguous internal error. Database execution has its own bounded deadline
+  and stable 504 `query_timeout` contract.
 - GitHub Actions separates formatting/vet/unit/Linux-build, race, real
   PostgreSQL integration and Web lint/test/build jobs with read-only checkout
   permissions.

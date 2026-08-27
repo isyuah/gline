@@ -106,3 +106,8 @@
 - Documented that the MVP limiter is per Server instance. Horizontal replicas
   multiply effective capacity until a gateway or shared admission store is
   deliberately introduced with new consistency semantics.
+- Aligned the existing per-Project Query semaphore with the same resource
+  contract: capacity exhaustion now fails fast as 429 plus `Retry-After`, while
+  request cancellation and database execution deadlines remain distinct. Query
+  deadline failures now expose stable 504 `query_timeout` instead of a generic
+  internal error.
