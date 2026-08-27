@@ -3,11 +3,14 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/isyuah/gline/internal/domain"
 	"github.com/isyuah/gline/internal/protocol/ingestv1"
+	"github.com/isyuah/gline/internal/server/admission"
 	serverauth "github.com/isyuah/gline/internal/server/auth"
 	"github.com/isyuah/gline/internal/server/control"
 	"github.com/isyuah/gline/internal/server/ingest"
@@ -40,6 +43,14 @@ func errBadRequest(code, message string, details any) error {
 
 func writeError(c *gin.Context, err error) {
 	mapped := mapError(err)
+	var limited *admission.LimitError
+	if errors.As(err, &limited) {
+		seconds := int(math.Ceil(limited.RetryAfter.Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		c.Header("Retry-After", strconv.Itoa(seconds))
+	}
 	errorBody := gin.H{"code": mapped.Code, "message": mapped.Message, "request_id": requestID(c)}
 	if mapped.Details != nil {
 		errorBody["details"] = mapped.Details
@@ -77,6 +88,10 @@ func mapError(err error) *apiError {
 		return &apiError{Status: http.StatusConflict, Code: "resource_unavailable", Message: "resource is disabled or unavailable", Cause: err}
 	case errors.Is(err, ingestv1.ErrBodyTooLarge):
 		return &apiError{Status: http.StatusRequestEntityTooLarge, Code: "body_too_large", Message: "request body exceeds the configured limit", Cause: err}
+	case errors.Is(err, admission.ErrBatchExceedsCapacity):
+		return &apiError{Status: http.StatusRequestEntityTooLarge, Code: "admission_capacity_exceeded", Message: "batch cost exceeds the configured ingest capacity", Cause: err}
+	case errors.Is(err, admission.ErrLimited):
+		return &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "ingest capacity is temporarily exhausted", Cause: err}
 	case errors.Is(err, ingestv1.ErrUnsupportedVersion):
 		return &apiError{Status: http.StatusUnprocessableEntity, Code: "unsupported_protocol", Message: "ingest protocol version is not supported", Cause: err}
 	case errors.Is(err, ingestv1.ErrInvalidJSON), errors.Is(err, ingestv1.ErrTrailingJSON):

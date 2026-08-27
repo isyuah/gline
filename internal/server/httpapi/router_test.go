@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/isyuah/gline/internal/domain"
+	"github.com/isyuah/gline/internal/server/admission"
 	serverauth "github.com/isyuah/gline/internal/server/auth"
 	"github.com/isyuah/gline/internal/server/control"
 	"github.com/isyuah/gline/internal/server/ingest"
@@ -311,6 +312,31 @@ func TestIngestRouteDecodesNormalizesAndForwardsAuthenticatedProject(t *testing.
 	}
 	if !strings.Contains(response.Body.String(), `"status":"accepted"`) {
 		t.Fatalf("body=%s", response.Body)
+	}
+}
+
+func TestIngestRateLimitReturnsRetryAfter(t *testing.T) {
+	ingestion := &fakeIngest{err: &admission.LimitError{Reason: admission.ReasonProjectInflight, RetryAfter: 2500 * time.Millisecond}}
+	dependencies := testDependencies(testPrincipal(domain.ScopeIngest))
+	dependencies.Ingest = ingestion
+	handler := testRouter(t, dependencies)
+	body := `{"protocol_version":1,"batch_id":"44444444-4444-4444-8444-444444444444","agent_id":"22222222-2222-4222-8222-222222222222","pipeline_id":"33333333-3333-4333-8333-333333333333","sequence":7,"sent_at":"2026-08-24T00:00:00Z","entries":[{"sequence":0,"observed_at":"2026-08-24T00:00:00Z","level":"info","service":"api","host":"host-a","message":"ready","attributes":{}}]}`
+	response := perform(handler, http.MethodPost, "/api/v1/batches", "api-key", body)
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "3" || !strings.Contains(response.Body.String(), `"code":"rate_limited"`) {
+		t.Fatalf("status=%d retry-after=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+	}
+}
+
+func TestIngestCapacityErrorIsNonRetryable(t *testing.T) {
+	ingestion := &fakeIngest{err: admission.ErrBatchExceedsCapacity}
+	dependencies := testDependencies(testPrincipal(domain.ScopeIngest))
+	dependencies.Ingest = ingestion
+	handler := testRouter(t, dependencies)
+	body := `{"protocol_version":1,"batch_id":"44444444-4444-4444-8444-444444444444","agent_id":"22222222-2222-4222-8222-222222222222","pipeline_id":"33333333-3333-4333-8333-333333333333","sequence":7,"sent_at":"2026-08-24T00:00:00Z","entries":[{"sequence":0,"observed_at":"2026-08-24T00:00:00Z","level":"info","service":"api","host":"host-a","message":"ready","attributes":{}}]}`
+	response := perform(handler, http.MethodPost, "/api/v1/batches", "api-key", body)
+	if response.Code != http.StatusRequestEntityTooLarge || response.Header().Get("Retry-After") != "" ||
+		!strings.Contains(response.Body.String(), `"code":"admission_capacity_exceeded"`) {
+		t.Fatalf("status=%d retry-after=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
 	}
 }
 

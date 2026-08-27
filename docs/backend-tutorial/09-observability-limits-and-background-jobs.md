@@ -192,8 +192,13 @@ type Quota struct {
 }
 
 type Admission interface {
-    AllowIngest(ctx context.Context, projectID string, entries, bytes int64) (Reservation, error)
+    AllowIngest(ctx context.Context, keyID, projectID string, entries int, bytes int64) (Reservation, error)
     AllowQuery(ctx context.Context, projectID string, window time.Duration) (Reservation, error)
+}
+
+type Reservation interface {
+    Commit()  // 新批次事务成功后确认 entries/bytes 消耗
+    Release() // duplicate 或失败时退还，且始终释放并发槽
 }
 ```
 
@@ -205,6 +210,10 @@ if err != nil {
     return writeProblem(w, ErrQuotaExceeded)
 }
 defer reservation.Release()
+
+if result.Status == StatusAccepted {
+    reservation.Commit()
+}
 ```
 
 不要在数据库事务提交之前永久扣除配额，也不要在请求失败后忘记释放并发槽。配额计数的精确一致性要根据目标说明：MVP 可以是实例级近似；如果产品声称跨节点严格额度，就必须引入共享计数存储和新的故障语义。
@@ -215,6 +224,55 @@ defer reservation.Release()
 - `429 Too Many Requests`：资源暂时不足，返回可选 `Retry-After`；
 - `503 Service Unavailable`：实例不 ready 或依赖不可用，Agent 保留 batch；
 - `403 Forbidden`：权限/项目状态问题，通常进入配置暂停或 quarantine。
+
+### 9.6.1 当前源码：单实例 Ingest Admission
+
+当前实现位于 `internal/server/admission`，由 bootstrap 注入
+`ingest.Service`。完整顺序是：
+
+```text
+Bearer 鉴权成功
+  -> 协议 Decode / Normalize / domain Validate
+  -> API Key 请求令牌
+  -> Project entries / bytes 令牌和 inflight 槽预留
+  -> PostgreSQL ingest transaction
+  -> accepted: Reservation.Commit
+  -> duplicate / error: Reservation.Release 退还 entries / bytes
+  -> 所有分支释放 inflight
+```
+
+配置入口：
+
+| 环境变量 | 默认值 | 作用域 |
+| --- | ---: | --- |
+| `GLINE_INGEST_REQUESTS_PER_MINUTE` | 600 | 单实例、每 API Key |
+| `GLINE_INGEST_ENTRIES_PER_MINUTE` | 120000 | 单实例、每 Project |
+| `GLINE_INGEST_BYTES_PER_MINUTE` | 268435456 | 单实例、每 Project |
+| `GLINE_INGEST_MAX_INFLIGHT` | 16 | 单实例、每 Project |
+
+请求预算保护 Server 工作量，因此一个已鉴权但被 Project 预算拒绝的请求也会消耗
+Key 请求令牌。entries/bytes 更接近业务用量：只有新 batch 成功提交后才最终扣除；
+幂等 `duplicate`、事务回滚和其他失败都会退还。若单个 batch 已经大于整分钟容量，
+返回 413，因为等待不会让它变得可接收；暂时耗尽返回 429 和向上取整的
+`Retry-After` 秒数，Agent 按同一个 batch ID 与 payload 重试，不推进 checkpoint。
+正常配置在 Server 启动时还会验证 entries/bytes 分钟容量至少放得下一个协议最大
+batch，避免“协议允许但准入永远拒绝”的不可达状态；运行时的 413 是额外防御。
+
+对应指标使用有限枚举：
+
+```text
+gline_server_admission_requests_total{result="accepted|rejected",reason="none|key_rate|project_entries|project_bytes|project_inflight"}
+gline_server_admission_inflight
+```
+
+这里故意不使用 API Key ID 或 Project ID 作为 label。`admission accepted` 只表示
+请求获得了本地预算，不等于数据库事务成功；最终结果看
+`gline_server_ingest_batches_total`。限流器会清理长期不活跃且没有 inflight 的状态，
+避免 Key 轮换无限增长内存。
+
+水平扩展时，每个 Server 副本拥有独立 token bucket。若三台副本配置相同，集群
+有效容量近似三倍且受负载均衡分布影响。这是当前明确的单实例近似语义；只有产品
+确实需要全局配额时，才引入网关或共享存储，并重新设计可用性、延迟和故障降级。
 
 ## 9.7 后台任务模型
 

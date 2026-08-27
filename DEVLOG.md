@@ -89,3 +89,20 @@
 - Re-ran Go unit, tagged-build, race and vet checks, Linux builds, Web
   lint/test/build and Compose rendering; all available checks passed. The two
   real PostgreSQL tests skipped because no local database URL is available.
+
+## 2026-08-27 - Ingest admission control
+
+- Added a concurrency-safe, bounded in-memory token bucket with per-API-key
+  request rate and per-Project entry, byte and in-flight budgets. Idle key and
+  Project state is evicted; no high-cardinality identity appears in metrics.
+- Placed admission after authentication and batch validation but before the
+  database transaction. Request attempts consume the key rate; entry/byte cost
+  is committed only for a new accepted batch and refunded for duplicate or
+  failed transactions. In-flight reservations always release exactly once.
+- Mapped temporary exhaustion to 429 plus `Retry-After`; the existing Agent
+  transport classifies it as retryable and honors the delay without advancing
+  its durable checkpoint. A batch larger than configured minute capacity gets
+  a non-retryable 413 because it can never fit without configuration change.
+- Documented that the MVP limiter is per Server instance. Horizontal replicas
+  multiply effective capacity until a gateway or shared admission store is
+  deliberately introduced with new consistency semantics.

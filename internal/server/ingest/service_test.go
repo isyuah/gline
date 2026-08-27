@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/isyuah/gline/internal/domain"
+	"github.com/isyuah/gline/internal/server/admission"
 	serverauth "github.com/isyuah/gline/internal/server/auth"
 )
 
@@ -105,6 +106,81 @@ func TestAcceptSeparatesAcceptedDuplicateAndConflict(t *testing.T) {
 		})
 	}
 }
+
+func TestAcceptCommitsOnlyAcceptedAdmissionCost(t *testing.T) {
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		inserted   bool
+		commitErr  error
+		wantCommit int
+	}{
+		{name: "accepted", inserted: true, wantCommit: 1},
+		{name: "duplicate is refunded"},
+		{name: "transaction failure is refunded", inserted: true, commitErr: errors.New("commit failed")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := testBatch(now)
+			batches := &batchRepo{inserted: test.inserted, stored: domain.StoredBatch{
+				ID: batchID, ProjectID: projectID, Status: domain.BatchCommitted,
+				PayloadHash: candidate.PayloadHash, EntryCount: 1,
+			}}
+			reservation := &fakeReservation{}
+			controller := &fakeAdmission{reservation: reservation}
+			service, err := NewService(testWithinTx(batches, &usageRepo{}, test.commitErr), func() time.Time { return now }, WithAdmission(controller))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = service.Accept(t.Context(), testPrincipal(), candidate)
+			if reservation.commits != test.wantCommit || reservation.releases != 1 {
+				t.Fatalf("reservation commits=%d releases=%d", reservation.commits, reservation.releases)
+			}
+			if controller.keyID != testPrincipal().KeyID || controller.projectID != projectID || controller.entries != 1 || controller.bytes != 10 {
+				t.Fatalf("admission input = %+v", controller)
+			}
+		})
+	}
+}
+
+func TestAcceptStopsBeforeTransactionWhenAdmissionIsLimited(t *testing.T) {
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	controller := &fakeAdmission{err: &admission.LimitError{
+		Reason: admission.ReasonProjectInflight, RetryAfter: time.Second,
+	}}
+	service, err := NewService(func(context.Context, func(Repositories) error) error {
+		t.Fatal("transaction started after admission rejection")
+		return nil
+	}, func() time.Time { return now }, WithAdmission(controller))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Accept(t.Context(), testPrincipal(), testBatch(now)); !errors.Is(err, admission.ErrLimited) {
+		t.Fatalf("Accept() error = %v", err)
+	}
+}
+
+type fakeAdmission struct {
+	reservation *fakeReservation
+	keyID       domain.APIKeyID
+	projectID   domain.ProjectID
+	entries     int
+	bytes       int64
+	err         error
+}
+
+func (a *fakeAdmission) AllowIngest(_ context.Context, keyID domain.APIKeyID, projectID domain.ProjectID, entries int, bytes int64) (admission.Reservation, error) {
+	a.keyID, a.projectID, a.entries, a.bytes = keyID, projectID, entries, bytes
+	return a.reservation, a.err
+}
+
+type fakeReservation struct {
+	commits  int
+	releases int
+}
+
+func (r *fakeReservation) Commit()  { r.commits++ }
+func (r *fakeReservation) Release() { r.releases++ }
 
 func testWithinTx(batches *batchRepo, usage *usageRepo, commitErr error) WithinTx {
 	return func(ctx context.Context, fn func(Repositories) error) error {

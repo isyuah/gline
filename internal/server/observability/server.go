@@ -8,17 +8,19 @@ import (
 )
 
 type ServerMetrics struct {
-	ingestBatches  *prometheus.CounterVec
-	ingestEntries  *prometheus.CounterVec
-	ingestBytes    *prometheus.CounterVec
-	ingestDuration *prometheus.HistogramVec
-	queryRequests  *prometheus.CounterVec
-	queryRows      *prometheus.HistogramVec
-	queryDuration  *prometheus.HistogramVec
-	jobRuns        *prometheus.CounterVec
-	jobProcessed   *prometheus.CounterVec
-	jobDuration    *prometheus.HistogramVec
-	jobLastSuccess *prometheus.GaugeVec
+	ingestBatches     *prometheus.CounterVec
+	ingestEntries     *prometheus.CounterVec
+	ingestBytes       *prometheus.CounterVec
+	ingestDuration    *prometheus.HistogramVec
+	queryRequests     *prometheus.CounterVec
+	queryRows         *prometheus.HistogramVec
+	queryDuration     *prometheus.HistogramVec
+	jobRuns           *prometheus.CounterVec
+	jobProcessed      *prometheus.CounterVec
+	jobDuration       *prometheus.HistogramVec
+	jobLastSuccess    *prometheus.GaugeVec
+	admissionRequests *prometheus.CounterVec
+	admissionInflight prometheus.Gauge
 }
 
 func NewServerMetrics(registerer prometheus.Registerer, stats func() sql.DBStats) *ServerMetrics {
@@ -67,16 +69,33 @@ func NewServerMetrics(registerer prometheus.Registerer, stats func() sql.DBStats
 			Namespace: "gline", Subsystem: "server_background_job", Name: "last_success_timestamp_seconds",
 			Help: "Unix timestamp of the latest successful background job step.",
 		}, []string{"job"}),
+		admissionRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "gline", Subsystem: "server_admission", Name: "requests_total",
+			Help: "Ingest admission decisions by bounded result and reason.",
+		}, []string{"result", "reason"}),
+		admissionInflight: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "gline", Subsystem: "server_admission", Name: "inflight",
+			Help: "Ingest requests holding a project admission reservation.",
+		}),
 	}
 	registerer.MustRegister(
 		metrics.ingestBatches, metrics.ingestEntries, metrics.ingestBytes, metrics.ingestDuration,
 		metrics.queryRequests, metrics.queryRows, metrics.queryDuration,
 		metrics.jobRuns, metrics.jobProcessed, metrics.jobDuration, metrics.jobLastSuccess,
+		metrics.admissionRequests, metrics.admissionInflight,
 	)
 	if stats != nil {
 		registerDBMetrics(registerer, stats)
 	}
 	return metrics
+}
+
+func (m *ServerMetrics) ObserveAdmission(result, reason string) {
+	m.admissionRequests.WithLabelValues(result, reason).Inc()
+}
+
+func (m *ServerMetrics) AddAdmissionInflight(delta float64) {
+	m.admissionInflight.Add(delta)
 }
 
 func (m *ServerMetrics) ObserveIngest(result string, entries, payloadBytes int, duration time.Duration) {

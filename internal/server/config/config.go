@@ -7,43 +7,53 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/isyuah/gline/internal/protocol/ingestv1"
 )
 
 type Config struct {
-	HTTPAddr         string
-	DatabaseURL      string
-	BootstrapToken   string
-	APIKeyPepper     string
-	AllowedOrigins   []string
-	ShutdownTimeout  time.Duration
-	DatabaseTimeout  time.Duration
-	MaxRequestBytes  int64
-	QueryMaxRange    time.Duration
-	QueryTimeout     time.Duration
-	QueryMaxPageSize int
-	QueryConcurrency int
-	MaintenanceEvery time.Duration
-	AgentStaleAfter  time.Duration
-	RetentionBatch   int
+	HTTPAddr                string
+	DatabaseURL             string
+	BootstrapToken          string
+	APIKeyPepper            string
+	AllowedOrigins          []string
+	ShutdownTimeout         time.Duration
+	DatabaseTimeout         time.Duration
+	MaxRequestBytes         int64
+	IngestRequestsPerMinute int64
+	IngestEntriesPerMinute  int64
+	IngestBytesPerMinute    int64
+	IngestMaxInflight       int
+	QueryMaxRange           time.Duration
+	QueryTimeout            time.Duration
+	QueryMaxPageSize        int
+	QueryConcurrency        int
+	MaintenanceEvery        time.Duration
+	AgentStaleAfter         time.Duration
+	RetentionBatch          int
 }
 
 func FromEnv() (Config, error) {
 	cfg := Config{
-		HTTPAddr:         envOr("GLINE_HTTP_ADDR", ":8080"),
-		DatabaseURL:      strings.TrimSpace(os.Getenv("GLINE_DATABASE_URL")),
-		BootstrapToken:   strings.TrimSpace(os.Getenv("GLINE_BOOTSTRAP_TOKEN")),
-		APIKeyPepper:     strings.TrimSpace(os.Getenv("GLINE_API_KEY_PEPPER")),
-		AllowedOrigins:   splitCSV(os.Getenv("GLINE_ALLOWED_ORIGINS")),
-		ShutdownTimeout:  15 * time.Second,
-		DatabaseTimeout:  10 * time.Second,
-		MaxRequestBytes:  8 << 20,
-		QueryMaxRange:    7 * 24 * time.Hour,
-		QueryTimeout:     10 * time.Second,
-		QueryMaxPageSize: 500,
-		QueryConcurrency: 8,
-		MaintenanceEvery: time.Minute,
-		AgentStaleAfter:  2 * time.Minute,
-		RetentionBatch:   1000,
+		HTTPAddr:                envOr("GLINE_HTTP_ADDR", ":8080"),
+		DatabaseURL:             strings.TrimSpace(os.Getenv("GLINE_DATABASE_URL")),
+		BootstrapToken:          strings.TrimSpace(os.Getenv("GLINE_BOOTSTRAP_TOKEN")),
+		APIKeyPepper:            strings.TrimSpace(os.Getenv("GLINE_API_KEY_PEPPER")),
+		AllowedOrigins:          splitCSV(os.Getenv("GLINE_ALLOWED_ORIGINS")),
+		ShutdownTimeout:         15 * time.Second,
+		DatabaseTimeout:         10 * time.Second,
+		MaxRequestBytes:         8 << 20,
+		IngestRequestsPerMinute: 600,
+		IngestEntriesPerMinute:  120_000,
+		IngestBytesPerMinute:    256 << 20,
+		IngestMaxInflight:       16,
+		QueryMaxRange:           7 * 24 * time.Hour,
+		QueryTimeout:            10 * time.Second,
+		QueryMaxPageSize:        500,
+		QueryConcurrency:        8,
+		MaintenanceEvery:        time.Minute,
+		AgentStaleAfter:         2 * time.Minute,
+		RetentionBatch:          1000,
 	}
 
 	var err error
@@ -61,6 +71,20 @@ func FromEnv() (Config, error) {
 	}
 	if cfg.MaxRequestBytes, err = int64Env("GLINE_MAX_REQUEST_BYTES", cfg.MaxRequestBytes); err != nil {
 		return Config{}, err
+	}
+	if cfg.IngestRequestsPerMinute, err = int64Env("GLINE_INGEST_REQUESTS_PER_MINUTE", cfg.IngestRequestsPerMinute); err != nil {
+		return Config{}, err
+	}
+	if cfg.IngestEntriesPerMinute, err = int64Env("GLINE_INGEST_ENTRIES_PER_MINUTE", cfg.IngestEntriesPerMinute); err != nil {
+		return Config{}, err
+	}
+	if cfg.IngestBytesPerMinute, err = int64Env("GLINE_INGEST_BYTES_PER_MINUTE", cfg.IngestBytesPerMinute); err != nil {
+		return Config{}, err
+	}
+	if value, parseErr := int64Env("GLINE_INGEST_MAX_INFLIGHT", int64(cfg.IngestMaxInflight)); parseErr != nil {
+		return Config{}, parseErr
+	} else {
+		cfg.IngestMaxInflight = int(value)
 	}
 	if pageSize, parseErr := int64Env("GLINE_QUERY_MAX_PAGE_SIZE", int64(cfg.QueryMaxPageSize)); parseErr != nil {
 		return Config{}, parseErr
@@ -93,10 +117,22 @@ func FromEnv() (Config, error) {
 	if len(cfg.APIKeyPepper) < 24 {
 		return Config{}, errors.New("GLINE_API_KEY_PEPPER must contain at least 24 characters")
 	}
-	if cfg.MaxRequestBytes <= 0 || cfg.QueryMaxPageSize <= 0 || cfg.QueryMaxPageSize > 1000 ||
+	ingestLimits := ingestv1.DefaultLimits()
+	effectiveIngestBody := cfg.MaxRequestBytes
+	if effectiveIngestBody > ingestLimits.MaxBodyBytes {
+		effectiveIngestBody = ingestLimits.MaxBodyBytes
+	}
+	if cfg.MaxRequestBytes <= 0 || cfg.IngestRequestsPerMinute <= 0 || cfg.IngestRequestsPerMinute > 1_000_000 ||
+		cfg.IngestEntriesPerMinute <= 0 || cfg.IngestEntriesPerMinute > 1_000_000_000 ||
+		cfg.IngestBytesPerMinute <= 0 || cfg.IngestBytesPerMinute > 1<<50 ||
+		cfg.IngestMaxInflight <= 0 || cfg.IngestMaxInflight > 10_000 ||
+		cfg.QueryMaxPageSize <= 0 || cfg.QueryMaxPageSize > 1000 ||
 		cfg.QueryConcurrency <= 0 || cfg.QueryConcurrency > 1024 || cfg.RetentionBatch <= 0 || cfg.RetentionBatch > 10_000 ||
 		cfg.AgentStaleAfter <= cfg.MaintenanceEvery {
-		return Config{}, errors.New("request and query limits must be positive and bounded")
+		return Config{}, errors.New("operational limits must be positive and bounded")
+	}
+	if cfg.IngestEntriesPerMinute < int64(ingestLimits.MaxEntries) || cfg.IngestBytesPerMinute < effectiveIngestBody {
+		return Config{}, errors.New("ingest minute capacity must fit one maximum protocol batch")
 	}
 	return cfg, nil
 }

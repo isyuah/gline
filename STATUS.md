@@ -36,6 +36,11 @@ Updated: 2026-08-27
   Pipeline metrics computed from recovered state.
 - Liveness is independent of PostgreSQL. Readiness checks PostgreSQL and turns
   unavailable as soon as graceful shutdown enters draining state.
+- Ingest admission applies per-key request rate and per-Project entry, byte and
+  in-flight budgets before opening a database transaction. 429 responses carry
+  retry timing and the Agent keeps the same batch; accepted batches commit
+  usage while duplicate/failed transactions refund reservations. Limits are
+  explicitly single-instance, not a global multi-replica quota.
 - GitHub Actions separates formatting/vet/unit/Linux-build, race, real
   PostgreSQL integration and Web lint/test/build jobs with read-only checkout
   permissions.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/isyuah/gline/internal/domain"
+	"github.com/isyuah/gline/internal/server/admission"
 	serverauth "github.com/isyuah/gline/internal/server/auth"
 )
 
@@ -53,19 +54,28 @@ type WithinTx func(context.Context, func(Repositories) error) error
 type Clock func() time.Time
 
 type Service struct {
-	withinTx WithinTx
-	now      Clock
-	observer Observer
+	withinTx  WithinTx
+	now       Clock
+	observer  Observer
+	admission Admission
 }
 
 type Observer interface {
 	ObserveIngest(result string, entries, payloadBytes int, duration time.Duration)
 }
 
+type Admission interface {
+	AllowIngest(context.Context, domain.APIKeyID, domain.ProjectID, int, int64) (admission.Reservation, error)
+}
+
 type Option func(*Service)
 
 func WithObserver(observer Observer) Option {
 	return func(service *Service) { service.observer = observer }
+}
+
+func WithAdmission(controller Admission) Option {
+	return func(service *Service) { service.admission = controller }
 }
 
 func NewService(withinTx WithinTx, now Clock, options ...Option) (*Service, error) {
@@ -104,6 +114,9 @@ func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, ca
 			return
 		}
 		outcome := "rejected"
+		if errors.Is(err, admission.ErrLimited) {
+			outcome = "rate_limited"
+		}
 		if err == nil {
 			outcome = string(result.Status)
 		}
@@ -132,6 +145,14 @@ func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, ca
 	}
 	if err := batch.Validate(); err != nil {
 		return Result{}, err
+	}
+	var reservation admission.Reservation
+	if s.admission != nil {
+		reservation, err = s.admission.AllowIngest(ctx, principal.KeyID, principal.ProjectID, len(batch.Entries), int64(batch.PayloadBytes))
+		if err != nil {
+			return Result{}, err
+		}
+		defer reservation.Release()
 	}
 
 	result = Result{BatchID: batch.ID, AcceptedEntries: len(batch.Entries)}
@@ -195,6 +216,9 @@ func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, ca
 	}
 	if result.Status != StatusAccepted && result.Status != StatusDuplicate {
 		return Result{}, errors.New("ingest transaction completed without a terminal result")
+	}
+	if result.Status == StatusAccepted && reservation != nil {
+		reservation.Commit()
 	}
 	return result, nil
 }

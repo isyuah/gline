@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/isyuah/gline/internal/protocol/ingestv1"
+	"github.com/isyuah/gline/internal/server/admission"
 	serverauth "github.com/isyuah/gline/internal/server/auth"
 	"github.com/isyuah/gline/internal/server/config"
 	"github.com/isyuah/gline/internal/server/control"
@@ -81,7 +82,17 @@ func New(ctx context.Context, cfg config.Config, version string, logger *slog.Lo
 	if err != nil {
 		return nil, err
 	}
-	ingestService, err := ingest.NewService(ingestTransactions(store), nil, ingest.WithObserver(serverMetrics))
+	admissionController, err := admission.New(admission.Config{
+		RequestsPerMinute: cfg.IngestRequestsPerMinute,
+		EntriesPerMinute:  cfg.IngestEntriesPerMinute,
+		BytesPerMinute:    cfg.IngestBytesPerMinute,
+		MaxInflight:       cfg.IngestMaxInflight,
+	}, serverMetrics)
+	if err != nil {
+		return nil, err
+	}
+	ingestService, err := ingest.NewService(ingestTransactions(store), nil,
+		ingest.WithObserver(serverMetrics), ingest.WithAdmission(admissionController))
 	if err != nil {
 		return nil, err
 	}

@@ -43,10 +43,14 @@ func TestServerMetricContractIncludesBusinessJobAndPoolSignals(t *testing.T) {
 	metrics.ObserveIngest("accepted", 2, 256, time.Millisecond)
 	metrics.ObserveQuery("success", "time_only", 2, time.Millisecond)
 	metrics.ObserveBackgroundJob("retention_age", "success", 2, time.Millisecond)
+	metrics.ObserveAdmission("rejected", "project_inflight")
+	metrics.AddAdmissionInflight(1)
+	metrics.AddAdmissionInflight(-1)
 
 	for _, name := range []string{
 		"gline_server_ingest_batches_total", "gline_server_query_requests_total",
 		"gline_server_background_job_runs_total", "gline_server_db_pool_in_use_connections",
+		"gline_server_admission_requests_total", "gline_server_admission_inflight",
 	} {
 		_ = gatherFamily(t, registry, name)
 	}

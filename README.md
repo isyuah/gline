@@ -30,6 +30,8 @@ collection of unused infrastructure.
 - Health, database readiness, Prometheus metrics and graceful shutdown.
 - Low-cardinality HTTP, ingest, query, database-pool and background-job
   metrics; optional loopback-only Agent spool/delivery metrics.
+- Per-key request and per-Project entry/byte/in-flight ingest admission with
+  bounded in-memory token buckets, explicit 429 retry semantics and metrics.
 - File-identity checkpoints, copy-truncate and rename/recreate rotation handling,
   CRC-protected WAL recovery, bounded spool backpressure and retrying delivery.
 - React administration console and a Docker Compose delivery topology.
@@ -133,6 +135,15 @@ The reliable example explicitly enables Agent operations at
 loopback host; omit it to disable this listener. Its gauges are calculated from
 the recovered WAL state, so a process restart does not reset the visible
 backlog.
+
+Ingest admission is configured with `GLINE_INGEST_REQUESTS_PER_MINUTE`,
+`GLINE_INGEST_ENTRIES_PER_MINUTE`, `GLINE_INGEST_BYTES_PER_MINUTE` and
+`GLINE_INGEST_MAX_INFLIGHT`. A 429 response includes `Retry-After`; the Agent
+keeps the immutable batch and retries it. Entry/byte reservations are committed
+only for a newly accepted batch and are refunded for duplicate or failed
+transactions. These counters are intentionally per Server process: with
+multiple replicas, the effective cluster allowance is approximately the sum of
+their local limits unless a gateway or shared admission store is introduced.
 
 The Server-side quarantine table and console tab are deliberately separate from
 this Agent-local path. They become active when a later asynchronous parser or

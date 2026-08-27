@@ -203,6 +203,7 @@ func TestApplicationHTTPWorkflowAgainstPostgreSQL(t *testing.T) {
 	for _, family := range []string{
 		"gline_server_ingest_batches_total", "gline_server_query_requests_total",
 		"gline_server_db_pool_open_connections", "gline_server_http_requests_total",
+		"gline_server_admission_requests_total",
 	} {
 		if !strings.Contains(metricsBody, family) {
 			t.Fatalf("metrics output is missing %s", family)
@@ -215,20 +216,24 @@ func TestApplicationHTTPWorkflowAgainstPostgreSQL(t *testing.T) {
 
 func integrationConfig(databaseURL string) config.Config {
 	return config.Config{
-		HTTPAddr:         "127.0.0.1:0",
-		DatabaseURL:      databaseURL,
-		BootstrapToken:   integrationBootstrapToken,
-		APIKeyPepper:     "integration-api-key-pepper-at-least-24-bytes",
-		ShutdownTimeout:  5 * time.Second,
-		DatabaseTimeout:  5 * time.Second,
-		MaxRequestBytes:  8 << 20,
-		QueryMaxRange:    7 * 24 * time.Hour,
-		QueryTimeout:     5 * time.Second,
-		QueryMaxPageSize: 500,
-		QueryConcurrency: 8,
-		MaintenanceEvery: time.Minute,
-		AgentStaleAfter:  2 * time.Minute,
-		RetentionBatch:   100,
+		HTTPAddr:                "127.0.0.1:0",
+		DatabaseURL:             databaseURL,
+		BootstrapToken:          integrationBootstrapToken,
+		APIKeyPepper:            "integration-api-key-pepper-at-least-24-bytes",
+		ShutdownTimeout:         5 * time.Second,
+		DatabaseTimeout:         5 * time.Second,
+		MaxRequestBytes:         8 << 20,
+		IngestRequestsPerMinute: 600,
+		IngestEntriesPerMinute:  120_000,
+		IngestBytesPerMinute:    256 << 20,
+		IngestMaxInflight:       16,
+		QueryMaxRange:           7 * 24 * time.Hour,
+		QueryTimeout:            5 * time.Second,
+		QueryMaxPageSize:        500,
+		QueryConcurrency:        8,
+		MaintenanceEvery:        time.Minute,
+		AgentStaleAfter:         2 * time.Minute,
+		RetentionBatch:          100,
 	}
 }
 

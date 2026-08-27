@@ -90,6 +90,25 @@ func TestHTTPTransportTreatsNetworkFailureAsRetryable(t *testing.T) {
 	}
 }
 
+func TestHTTPTransportHonorsRetryAfterOnRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Retry-After", "7")
+		writer.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	transport, err := NewHTTPTransport(server.URL, "secret", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := transport.Send(t.Context(), []byte(`{"batch_id":"rate-limited"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Class != ResultRetryable || result.RetryAfter != 7*time.Second {
+		t.Fatalf("Send() result = %+v", result)
+	}
+}
+
 func TestDispatcherRetriesSamePayloadThenAcknowledgesDuplicate(t *testing.T) {
 	store := openDispatcherSpool(t)
 	payload := []byte(`{"batch_id":"batch-1","entries":[]}`)
