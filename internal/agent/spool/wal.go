@@ -69,6 +69,13 @@ type Quarantined struct {
 	QuarantinedAt time.Time
 }
 
+type Stats struct {
+	UsedBytes          int64
+	PendingBatches     int
+	QuarantinedBatches int
+	OldestPendingAt    time.Time
+}
+
 type quarantineRecord struct {
 	BatchID       string    `json:"batch_id"`
 	HTTPCode      int       `json:"http_code"`
@@ -265,6 +272,25 @@ func (w *WAL) Quarantined() []Quarantined {
 		}
 	}
 	return result
+}
+
+func (w *WAL) Stats() Stats {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	stats := Stats{
+		UsedBytes: w.usedBytes, PendingBatches: len(w.pending),
+		QuarantinedBatches: len(w.quarantined),
+	}
+	for _, commit := range w.pending {
+		observedAt := commit.Checkpoint.ObservedAt
+		if observedAt.IsZero() {
+			continue
+		}
+		if stats.OldestPendingAt.IsZero() || observedAt.Before(stats.OldestPendingAt) {
+			stats.OldestPendingAt = observedAt
+		}
+	}
+	return stats
 }
 
 func (w *WAL) Checkpoint(sourceKey string) (source.Checkpoint, bool) {

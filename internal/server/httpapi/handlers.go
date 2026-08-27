@@ -24,6 +24,14 @@ func (h *Handler) health(c *gin.Context) {
 }
 
 func (h *Handler) ready(c *gin.Context) {
+	if h.config.Draining() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"status": "draining", "version": h.config.Version,
+			"checks":      gin.H{"server": gin.H{"status": "draining"}},
+			"observed_at": time.Now().UTC(),
+		})
+		return
+	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.config.ReadyTimeout)
 	defer cancel()
@@ -32,14 +40,14 @@ func (h *Handler) ready(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status": "unavailable", "version": h.config.Version,
-			"checks":      gin.H{"postgres": gin.H{"status": "unavailable", "latency_ms": latency}},
+			"checks":      gin.H{"database": gin.H{"status": "unavailable", "latency_ms": latency}},
 			"observed_at": time.Now().UTC(),
 		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"status": "healthy", "version": h.config.Version,
-		"checks":      gin.H{"postgres": gin.H{"status": "healthy", "latency_ms": latency}},
+		"checks":      gin.H{"database": gin.H{"status": "healthy", "latency_ms": latency}},
 		"observed_at": time.Now().UTC(),
 	})
 }

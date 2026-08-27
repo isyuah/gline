@@ -55,16 +55,33 @@ type Clock func() time.Time
 type Service struct {
 	withinTx WithinTx
 	now      Clock
+	observer Observer
 }
 
-func NewService(withinTx WithinTx, now Clock) (*Service, error) {
+type Observer interface {
+	ObserveIngest(result string, entries, payloadBytes int, duration time.Duration)
+}
+
+type Option func(*Service)
+
+func WithObserver(observer Observer) Option {
+	return func(service *Service) { service.observer = observer }
+}
+
+func NewService(withinTx WithinTx, now Clock, options ...Option) (*Service, error) {
 	if withinTx == nil {
 		return nil, errors.New("ingest service requires a transaction runner")
 	}
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{withinTx: withinTx, now: now}, nil
+	service := &Service{withinTx: withinTx, now: now}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service, nil
 }
 
 type Status string
@@ -80,7 +97,18 @@ type Result struct {
 	AcceptedEntries int
 }
 
-func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, candidate domain.Batch) (Result, error) {
+func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, candidate domain.Batch) (result Result, err error) {
+	started := time.Now()
+	defer func() {
+		if s.observer == nil {
+			return
+		}
+		outcome := "rejected"
+		if err == nil {
+			outcome = string(result.Status)
+		}
+		s.observer.ObserveIngest(outcome, len(candidate.Entries), candidate.PayloadBytes, time.Since(started))
+	}()
 	if err := principal.Require(domain.ScopeIngest); err != nil {
 		return Result{}, err
 	}
@@ -106,9 +134,9 @@ func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, ca
 		return Result{}, err
 	}
 
-	result := Result{BatchID: batch.ID, AcceptedEntries: len(batch.Entries)}
+	result = Result{BatchID: batch.ID, AcceptedEntries: len(batch.Entries)}
 	committedAt := s.now().UTC()
-	err := s.withinTx(ctx, func(repos Repositories) error {
+	err = s.withinTx(ctx, func(repos Repositories) error {
 		if err := requireRepositories(repos); err != nil {
 			return err
 		}

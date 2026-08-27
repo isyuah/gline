@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/isyuah/gline/internal/agent"
 	"github.com/isyuah/gline/internal/agent/config"
+	agentobservability "github.com/isyuah/gline/internal/agent/observability"
 	"github.com/isyuah/gline/internal/agent/reliable"
 	"github.com/isyuah/gline/internal/agent/source"
 	"github.com/isyuah/gline/internal/agent/spool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 )
 
@@ -105,20 +111,43 @@ func ReliableAgent(cfg config.GlineAgentConfig, logger zerolog.Logger) (agent.Ru
 	if err != nil {
 		return closeOnError(err, pipelines)
 	}
-	dispatcher, err := reliable.NewDispatcher(store, transport, reliable.DispatcherOptions{
+	var metrics *agentobservability.Metrics
+	var operations *http.Server
+	if address := strings.TrimSpace(cfg.Agent.MetricsAddr); address != "" {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+		metrics = agentobservability.NewMetrics(registry, store)
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+		mux.HandleFunc("/livez", func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"status":"healthy"}`))
+		})
+		operations = &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	}
+	dispatcherOptions := reliable.DispatcherOptions{
 		BaseDelay: senderParams.Retry.BaseDelay, MaxDelay: senderParams.Retry.MaxDelay,
 		Jitter: senderParams.Retry.Jitter,
 		OnQuarantine: func(value spool.Quarantined) {
 			logger.Error().Str("batch_id", value.Commit.BatchID).Int("http_status", value.HTTPCode).
 				Str("error_code", value.ErrorCode).Msg("batch moved to local quarantine")
 		},
-	})
+	}
+	if metrics != nil {
+		dispatcherOptions.Observer = metrics
+	}
+	dispatcher, err := reliable.NewDispatcher(store, transport, dispatcherOptions)
 	if err != nil {
 		return closeOnError(err, pipelines)
 	}
-	return &reliable.Agent{
+	result := &reliable.Agent{
 		Logger: logger, AgentID: cfg.Agent.ID, Pipelines: pipelines,
 		Spool: store, Dispatcher: dispatcher, Heartbeat: heartbeat,
-		Options: reliable.AgentOptions{BatchSize: senderParams.BatchSize, FlushInterval: senderParams.FlushInterval, HeartbeatInterval: senderParams.HeartbeatInterval},
-	}, nil
+		Operations: operations,
+		Options:    reliable.AgentOptions{BatchSize: senderParams.BatchSize, FlushInterval: senderParams.FlushInterval, HeartbeatInterval: senderParams.HeartbeatInterval},
+	}
+	if metrics != nil {
+		result.Observer = metrics
+	}
+	return result, nil
 }

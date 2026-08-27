@@ -28,6 +28,8 @@ collection of unused infrastructure.
   are ready for a future asynchronous processing stage; synchronous ingest does
   not acknowledge failed batches by parking them there.
 - Health, database readiness, Prometheus metrics and graceful shutdown.
+- Low-cardinality HTTP, ingest, query, database-pool and background-job
+  metrics; optional loopback-only Agent spool/delivery metrics.
 - File-identity checkpoints, copy-truncate and rename/recreate rotation handling,
   CRC-protected WAL recovery, bounded spool backpressure and retrying delivery.
 - React administration console and a Docker Compose delivery topology.
@@ -104,7 +106,9 @@ In another terminal, append a line:
 Add-Content -LiteralPath data\demo-api.log -Value '{"level":"info","message":"hello from gline"}'
 ```
 
-Useful endpoints are `http://localhost:8080/healthz`, `/readyz` and `/metrics`.
+Useful endpoints are `http://localhost:8080/livez`, `/readyz` and `/metrics`.
+`/livez` never checks PostgreSQL; `/readyz` checks the database and turns
+unavailable as soon as graceful shutdown begins.
 Stop the stack without deleting its named PostgreSQL volume:
 
 ```powershell
@@ -123,6 +127,12 @@ go run ./cmd/agent -config .glineconf -quarantine-discard <batch-id>
 Authentication, authorization and endpoint errors stop delivery with the batch
 still pending because those failures normally require fixing shared Agent
 configuration rather than discarding data.
+
+The reliable example explicitly enables Agent operations at
+`http://127.0.0.1:9109/metrics` and `/livez`. `metrics_addr` only accepts a
+loopback host; omit it to disable this listener. Its gauges are calculated from
+the recovered WAL state, so a process restart does not reset the visible
+backlog.
 
 The Server-side quarantine table and console tab are deliberately separate from
 this Agent-local path. They become active when a later asynchronous parser or
@@ -151,7 +161,7 @@ pnpm install
 pnpm dev
 ```
 
-Vite proxies `/api`, `/healthz` and `/readyz` to `localhost:8080`; open
+Vite proxies `/api`, `/healthz`, `/livez` and `/readyz` to `localhost:8080`; open
 `http://localhost:5173` and leave Base URL empty.
 
 ## Verification
@@ -168,12 +178,13 @@ pnpm test
 pnpm build
 ```
 
-PostgreSQL repository integration tests are opt-in because they need an isolated
-database URL:
+PostgreSQL integration tests are opt-in because they create temporary schemas
+and exercise both repositories and the full HTTP-to-database application
+workflow:
 
 ```powershell
 $env:GLINE_TEST_DATABASE_URL = 'postgres://gline:password@127.0.0.1:5432/gline_test?sslmode=disable'
-go test -tags=integration ./internal/storage/postgres -count=1
+go test -tags=integration ./... -count=1 -v
 ```
 
 Do not point this test at a database containing useful data.

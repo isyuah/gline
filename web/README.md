@@ -9,7 +9,7 @@ pnpm install
 pnpm dev
 ```
 
-Vite 会把 `/api`、`/healthz` 和 `/readyz` 代理到 `http://localhost:8080`。也可以在登录页输入完整 API 地址，例如 `http://localhost:8080/api/v1`。
+Vite 会把 `/api`、`/healthz`、`/livez` 和 `/readyz` 代理到 `http://localhost:8080`。也可以在登录页输入完整 API 地址，例如 `http://localhost:8080/api/v1`。
 
 ```powershell
 pnpm test

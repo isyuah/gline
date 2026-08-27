@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +37,7 @@ type Application struct {
 	maintenance *maintenance.Worker
 	logger      *slog.Logger
 	shutdown    time.Duration
+	draining    *atomic.Bool
 }
 
 func New(ctx context.Context, cfg config.Config, version string, logger *slog.Logger) (*Application, error) {
@@ -66,6 +68,10 @@ func New(ctx context.Context, cfg config.Config, version string, logger *slog.Lo
 		return nil, fmt.Errorf("migrate postgres: %w", err)
 	}
 	store := postgres.New(db)
+	registerer := prometheus.NewRegistry()
+	registerer.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	httpMetrics := observability.NewHTTPMetrics(registerer)
+	serverMetrics := observability.NewServerMetrics(registerer, store.Stats)
 
 	authenticator, err := serverauth.NewAuthenticator(store.APIKeys(), []byte(cfg.APIKeyPepper), nil, serverauth.WithLogger(logger))
 	if err != nil {
@@ -75,7 +81,7 @@ func New(ctx context.Context, cfg config.Config, version string, logger *slog.Lo
 	if err != nil {
 		return nil, err
 	}
-	ingestService, err := ingest.NewService(ingestTransactions(store), nil)
+	ingestService, err := ingest.NewService(ingestTransactions(store), nil, ingest.WithObserver(serverMetrics))
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +93,7 @@ func New(ctx context.Context, cfg config.Config, version string, logger *slog.Lo
 	if queryConfig.DefaultLimit > queryConfig.MaxLimit {
 		queryConfig.DefaultLimit = queryConfig.MaxLimit
 	}
-	queryService, err := query.NewService(store.Projects(), store.Entries(), newProjectLimiter(cfg.QueryConcurrency), cursorSecret[:], queryConfig)
+	queryService, err := query.NewService(store.Projects(), store.Entries(), newProjectLimiter(cfg.QueryConcurrency), cursorSecret[:], queryConfig, query.WithObserver(serverMetrics))
 	if err != nil {
 		return nil, err
 	}
@@ -100,10 +106,13 @@ func New(ctx context.Context, cfg config.Config, version string, logger *slog.Lo
 		return nil, err
 	}
 
+	draining := &atomic.Bool{}
 	handler, err := httpapi.New(httpapi.Config{
 		BootstrapToken: cfg.BootstrapToken, AllowedOrigins: cfg.AllowedOrigins,
 		MaxJSONBytes: cfg.MaxRequestBytes, IngestLimits: ingestLimits,
 		Version: version, ReadyTimeout: cfg.DatabaseTimeout,
+		Middleware: []gin.HandlerFunc{httpMetrics.Middleware()},
+		Draining:   draining.Load,
 	}, httpapi.Dependencies{
 		Authenticator: authenticator, Control: controlService, Ingest: ingestService,
 		Query: queryService, Operations: operationsService, Projects: store.Projects(),
@@ -115,27 +124,24 @@ func New(ctx context.Context, cfg config.Config, version string, logger *slog.Lo
 		return nil, err
 	}
 	router := handler.Router()
-	registerer := prometheus.NewRegistry()
-	registerer.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	router.GET("/metrics", gin.WrapH(promhttp.HandlerFor(registerer, promhttp.HandlerOpts{})))
-	metrics := observability.NewHTTPMetrics(registerer)
 
 	maintenanceConfig := maintenance.DefaultConfig()
 	maintenanceConfig.Interval = cfg.MaintenanceEvery
 	maintenanceConfig.AgentStaleAfter = cfg.AgentStaleAfter
 	maintenanceConfig.BatchSize = cfg.RetentionBatch
-	worker, err := maintenance.New(store.Agents(), store.Retention(), store.Quarantine(), maintenanceConfig, logger)
+	worker, err := maintenance.New(store.Agents(), store.Retention(), store.Quarantine(), maintenanceConfig, logger, maintenance.WithObserver(serverMetrics))
 	if err != nil {
 		return nil, err
 	}
 	failed = false
 	return &Application{
 		server: &http.Server{
-			Addr: cfg.HTTPAddr, Handler: metrics.Wrap(router),
+			Addr: cfg.HTTPAddr, Handler: router,
 			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 			WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 		},
-		store: store, maintenance: worker, logger: logger, shutdown: cfg.ShutdownTimeout,
+		store: store, maintenance: worker, logger: logger, shutdown: cfg.ShutdownTimeout, draining: draining,
 	}, nil
 }
 
@@ -162,6 +168,7 @@ func (a *Application) Run(ctx context.Context) error {
 			runErr = fmt.Errorf("maintenance worker: %w", err)
 		}
 	}
+	a.draining.Store(true)
 	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdown)

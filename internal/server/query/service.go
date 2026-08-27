@@ -76,9 +76,20 @@ type Service struct {
 	limiter  Limiter
 	cursors  *CursorCodec
 	config   Config
+	observer Observer
 }
 
-func NewService(projects ProjectRepository, entries EntryRepository, limiter Limiter, cursorSecret []byte, config Config) (*Service, error) {
+type Observer interface {
+	ObserveQuery(result, filterShape string, rows int, duration time.Duration)
+}
+
+type Option func(*Service)
+
+func WithObserver(observer Observer) Option {
+	return func(service *Service) { service.observer = observer }
+}
+
+func NewService(projects ProjectRepository, entries EntryRepository, limiter Limiter, cursorSecret []byte, config Config, options ...Option) (*Service, error) {
 	if projects == nil || entries == nil {
 		return nil, errors.New("query service requires project and entry repositories")
 	}
@@ -92,10 +103,28 @@ func NewService(projects ProjectRepository, entries EntryRepository, limiter Lim
 	if err != nil {
 		return nil, err
 	}
-	return &Service{projects: projects, entries: entries, limiter: limiter, cursors: codec, config: config}, nil
+	service := &Service{projects: projects, entries: entries, limiter: limiter, cursors: codec, config: config}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service, nil
 }
 
-func (s *Service) Search(ctx context.Context, principal serverauth.Principal, params Params) (Page, error) {
+func (s *Service) Search(ctx context.Context, principal serverauth.Principal, params Params) (result Page, err error) {
+	started := time.Now()
+	shape := filterShape(params)
+	defer func() {
+		if s.observer == nil {
+			return
+		}
+		outcome := "rejected"
+		if err == nil {
+			outcome = "success"
+		}
+		s.observer.ObserveQuery(outcome, shape, len(result.Entries), time.Since(started))
+	}()
 	if err := principal.Require(domain.ScopeQuery); err != nil {
 		return Page{}, err
 	}
@@ -136,7 +165,7 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 	if err != nil {
 		return Page{}, err
 	}
-	result := Page{Entries: page.Entries}
+	result = Page{Entries: page.Entries}
 	if page.Next != nil {
 		result.NextCursor, err = s.cursors.Encode(principal.ProjectID, filterHash, *page.Next)
 		if err != nil {
@@ -144,6 +173,25 @@ func (s *Service) Search(ctx context.Context, principal serverauth.Principal, pa
 		}
 	}
 	return result, nil
+}
+
+func filterShape(params Params) string {
+	hasService := len(params.Services) > 0
+	hasLevel := len(params.Levels) > 0
+	switch {
+	case strings.TrimSpace(params.Message) != "":
+		return "message_time"
+	case hasService && hasLevel && len(params.Hosts) == 0:
+		return "service_level_time"
+	case hasService && !hasLevel && len(params.Hosts) == 0:
+		return "service_time"
+	case hasLevel && !hasService && len(params.Hosts) == 0:
+		return "level_time"
+	case !hasService && !hasLevel && len(params.Hosts) == 0:
+		return "time_only"
+	default:
+		return "other_bounded"
+	}
 }
 
 func (s *Service) buildQuery(projectID domain.ProjectID, params Params) (domain.EntryQuery, [sha256.Size]byte, error) {

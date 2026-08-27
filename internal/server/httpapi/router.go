@@ -16,6 +16,8 @@ type Config struct {
 	IngestLimits   ingestv1.Limits
 	Version        string
 	ReadyTimeout   time.Duration
+	Middleware     []gin.HandlerFunc
+	Draining       func() bool
 }
 
 func DefaultConfig() Config {
@@ -56,6 +58,9 @@ func New(config Config, deps Dependencies) (*Handler, error) {
 	if strings.TrimSpace(config.Version) == "" {
 		config.Version = "dev"
 	}
+	if config.Draining == nil {
+		config.Draining = func() bool { return false }
+	}
 	origins := make(map[string]struct{}, len(config.AllowedOrigins))
 	for _, origin := range config.AllowedOrigins {
 		origin = strings.TrimSpace(origin)
@@ -71,7 +76,11 @@ func (h *Handler) Router() *gin.Engine {
 	router := gin.New()
 	_ = router.SetTrustedProxies(nil)
 	router.Use(h.requestID(), h.recovery(), h.cors())
+	if len(h.config.Middleware) > 0 {
+		router.Use(h.config.Middleware...)
+	}
 	router.GET("/healthz", h.health)
+	router.GET("/livez", h.health)
 	router.GET("/readyz", h.ready)
 
 	api := router.Group("/api/v1")

@@ -169,6 +169,13 @@ type fakeReady struct{ err error }
 
 func (f fakeReady) Ping(context.Context) error { return f.err }
 
+type countingReady struct{ calls int }
+
+func (f *countingReady) Ping(context.Context) error {
+	f.calls++
+	return errors.New("database unavailable")
+}
+
 func testPrincipal(scopes ...domain.Scope) serverauth.Principal {
 	granted := make(map[domain.Scope]struct{}, len(scopes))
 	for _, scope := range scopes {
@@ -207,6 +214,35 @@ func perform(handler http.Handler, method, target, token, body string) *httptest
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestLiveAndReadyKeepDependencyAndDrainingSemanticsSeparate(t *testing.T) {
+	ready := &countingReady{}
+	dependencies := testDependencies(testPrincipal())
+	dependencies.Ready = ready
+	draining := false
+	config := DefaultConfig()
+	config.BootstrapToken = testBootstrap
+	config.Draining = func() bool { return draining }
+	handler, err := New(config, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := handler.Router()
+
+	live := perform(router, http.MethodGet, "/livez", "", "")
+	if live.Code != http.StatusOK || ready.calls != 0 {
+		t.Fatalf("live status=%d ready calls=%d", live.Code, ready.calls)
+	}
+	unavailable := perform(router, http.MethodGet, "/readyz", "", "")
+	if unavailable.Code != http.StatusServiceUnavailable || ready.calls != 1 {
+		t.Fatalf("ready status=%d ready calls=%d", unavailable.Code, ready.calls)
+	}
+	draining = true
+	shuttingDown := perform(router, http.MethodGet, "/readyz", "", "")
+	if shuttingDown.Code != http.StatusServiceUnavailable || ready.calls != 1 || !strings.Contains(shuttingDown.Body.String(), "draining") {
+		t.Fatalf("draining status=%d ready calls=%d body=%s", shuttingDown.Code, ready.calls, shuttingDown.Body.String())
+	}
 }
 
 func TestAuthenticationErrorUsesStableModelAndRequestID(t *testing.T) {

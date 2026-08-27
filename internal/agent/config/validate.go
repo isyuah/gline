@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +15,9 @@ func (cfg GlineAgentConfig) Validate() error {
 	}
 	if len(cfg.Pipelines) == 0 {
 		return fmt.Errorf("pipelines is empty")
+	}
+	if len(cfg.Pipelines) > 128 {
+		return fmt.Errorf("pipelines exceeds maximum of 128")
 	}
 	ids := make(map[string]int, len(cfg.Pipelines))
 	for i, pipeline := range cfg.Pipelines {
@@ -56,6 +61,23 @@ func (cfg GlineAgentConfig) Validate() error {
 			if pipeline.Source.Type != "file" {
 				return fmt.Errorf("pipeline[%d] reliable mode requires file source", index)
 			}
+		}
+	}
+	if address := strings.TrimSpace(cfg.Agent.MetricsAddr); address != "" {
+		if cfg.Sender.Type != "reliable" {
+			return fmt.Errorf("agent metrics_addr is available only in reliable mode")
+		}
+		host, port, err := net.SplitHostPort(address)
+		if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+			return fmt.Errorf("agent metrics_addr must be a host:port address")
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return fmt.Errorf("agent metrics_addr must contain a valid TCP port")
+		}
+		ip := net.ParseIP(host)
+		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("agent metrics_addr must use a loopback host")
 		}
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -40,6 +41,14 @@ type Agent struct {
 	Dispatcher *Dispatcher
 	Heartbeat  HeartbeatReporter
 	Options    AgentOptions
+	Observer   AgentObserver
+	Operations *http.Server
+}
+
+type AgentObserver interface {
+	ObserveRecord(pipeline, result string)
+	ObserveBatchSpooled()
+	SetPipelineUp(pipeline string, up bool)
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -61,6 +70,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer cancel(nil)
 	dispatcherDone := make(chan error, 1)
 	go func() { dispatcherDone <- a.Dispatcher.Run(runCtx) }()
+	var operationsDone chan error
+	operationsFinished := false
+	if a.Operations != nil {
+		operationsDone = make(chan error, 1)
+		go func() { operationsDone <- a.Operations.ListenAndServe() }()
+	}
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
@@ -92,8 +107,25 @@ func (a *Agent) Run(ctx context.Context) error {
 		cause = err
 	case err := <-pipelineErrors:
 		cause = err
+	case err := <-operationsDone:
+		operationsFinished = true
+		if !errors.Is(err, http.ErrServerClosed) {
+			cause = fmt.Errorf("serve agent operations: %w", err)
+		}
 	}
 	cancel(cause)
+	if a.Operations != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownErr := a.Operations.Shutdown(shutdownCtx)
+		shutdownCancel()
+		if !operationsFinished {
+			operationsErr := <-operationsDone
+			if !errors.Is(operationsErr, http.ErrServerClosed) {
+				cause = errors.Join(cause, operationsErr)
+			}
+		}
+		cause = errors.Join(cause, shutdownErr)
+	}
 	pipelineWait.Wait()
 	if !dispatcherFinished {
 		<-dispatcherDone
@@ -122,6 +154,10 @@ func (a *Agent) runHeartbeat(ctx context.Context) {
 
 func (a *Agent) runPipeline(ctx context.Context, logger zerolog.Logger, pipeline *Pipeline) error {
 	defer pipeline.Source.Close()
+	if a.Observer != nil {
+		a.Observer.SetPipelineUp(pipeline.ID, true)
+		defer a.Observer.SetPipelineUp(pipeline.ID, false)
+	}
 	ticker := time.NewTicker(a.Options.FlushInterval)
 	defer ticker.Stop()
 	records := make(chan source.RawRecord)
@@ -169,6 +205,9 @@ func (a *Agent) runPipeline(ctx context.Context, logger zerolog.Logger, pipeline
 		if err != nil {
 			return err
 		}
+		if a.Observer != nil {
+			a.Observer.ObserveBatchSpooled()
+		}
 		entries = entries[:0]
 		return nil
 	}
@@ -212,9 +251,14 @@ func (a *Agent) runPipeline(ctx context.Context, logger zerolog.Logger, pipeline
 			}
 		case raw := <-records:
 			entry, parseErr := pipeline.Parser.Parse(raw)
+			parseResult := "parsed"
 			if parseErr != nil {
+				parseResult = "parse_failed"
 				logger.Warn().Err(parseErr).Msg("failed to parse log record")
 				entry = logentry.LogEntry{Timestamp: raw.ObservedAt, Level: logentry.LevelUnknown, Message: raw.Content}
+			}
+			if a.Observer != nil {
+				a.Observer.ObserveRecord(pipeline.ID, parseResult)
 			}
 			entry.Host = pipeline.Host
 			entry.Service = pipeline.Service

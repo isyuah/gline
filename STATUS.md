@@ -30,6 +30,15 @@ Updated: 2026-08-27
 - API-key last-used observation is bounded and best-effort, so an auxiliary
   write failure cannot reject valid authentication. Queries have a configurable
   server-side execution deadline in addition to their range/page limits.
+- Server metrics cover HTTP route templates, ingest, query, database pool and
+  bounded background jobs without Project, Batch, request or raw-error labels.
+  The reliable Agent optionally exposes loopback-only WAL, delivery, parse and
+  Pipeline metrics computed from recovered state.
+- Liveness is independent of PostgreSQL. Readiness checks PostgreSQL and turns
+  unavailable as soon as graceful shutdown enters draining state.
+- GitHub Actions separates formatting/vet/unit/Linux-build, race, real
+  PostgreSQL integration and Web lint/test/build jobs with read-only checkout
+  permissions.
 - The React console implements bootstrap login, Project/Key/Agent/Pipeline
   control, log search, retention, usage, audit, quarantine and health views.
 - Dockerfiles, Compose topology, environment template, reliable Agent example
@@ -49,11 +58,14 @@ Updated: 2026-08-27
 - Focused reliability coverage includes mismatched ACK rejection, durable local
   quarantine and discard, continuation after a bad batch, systemic stop with a
   pending batch, and offline rename/recreate epoch transition.
-- The PostgreSQL integration test target builds and its repository-only cases
-  pass, but the real database case explicitly reports `SKIP` because
-  `GLINE_TEST_DATABASE_URL` is unset.
+- The tagged PostgreSQL suite builds, including a full HTTP -> authentication ->
+  Control -> Ingest -> Query -> PostgreSQL workflow. Both database-backed cases
+  explicitly report `SKIP` locally because `GLINE_TEST_DATABASE_URL` is unset;
+  CI is configured to run them against PostgreSQL 17.
 - Secret and local absolute module replacement review: no committed credential
   found; the obsolete `E:/Proj/testx` replacement was removed.
+- The GitHub Actions workflow was locally reviewed and its commands were run in
+  their equivalent local forms; it has not yet executed on GitHub.
 
 ## Remaining Runtime Gate
 
@@ -72,7 +84,7 @@ Updated: 2026-08-27
 | --- | --- | --- | --- | --- | --- |
 | Reliable Agent | yes | yes | protocol-level | blocked by Server runtime | no |
 | Control plane | yes | yes | yes | blocked by PostgreSQL | no |
-| PostgreSQL ingest/query | yes | unit/race | code-level | blocked by Docker | no |
+| PostgreSQL ingest/query | yes | unit/race/tag-build | code-level | blocked by Docker | no |
 | Operations and maintenance | yes | yes | yes | blocked by PostgreSQL | no |
 | Web application | yes | yes | API contract | standalone dev server | no |
 | Compose environment | yes | config only | topology | Docker engine blocked | no |

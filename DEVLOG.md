@@ -66,3 +66,26 @@
   by the Docker Desktop engine failure recorded above.
 - Created a local checkpoint for the complete candidate. No remote push or
   deployment was performed.
+
+## 2026-08-27 - CI and operational observability
+
+- Added low-cardinality Server metrics for HTTP route templates, ingest/query
+  outcomes, database-pool state and bounded maintenance steps. Business services
+  depend only on narrow observer interfaces; Prometheus remains in composition.
+- Added optional loopback-only Agent `/metrics` and `/livez` endpoints. Spool
+  gauges derive from recovered WAL state, while delivery, parsing and Pipeline
+  signals use bounded result labels and a configured Pipeline cap.
+- Added `/livez` without database access and made `/readyz` reject immediately
+  during draining. The Compose health check now uses readiness.
+- Added GitHub Actions jobs for formatting/vet/unit/Linux builds, race tests,
+  PostgreSQL 17 integration and frontend lint/test/build. Checkout permissions
+  are read-only and no project secret is referenced.
+- Added an application-level PostgreSQL integration workflow covering liveness,
+  readiness, tenant resource creation, Agent-bound credentials, accepted and
+  duplicate ingest, bounded query, usage accounting and metric cardinality. It
+  creates and removes only its own random schema.
+- Formatted previously unformatted tracked Go files so the new repository-wide
+  formatting gate reflects a clean baseline; this was a mechanical change.
+- Re-ran Go unit, tagged-build, race and vet checks, Linux builds, Web
+  lint/test/build and Compose rendering; all available checks passed. The two
+  real PostgreSQL tests skipped because no local database URL is available.

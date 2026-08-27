@@ -17,6 +17,11 @@ type DispatcherOptions struct {
 	Random       *rand.Rand
 	Clock        func() time.Time
 	OnQuarantine func(spool.Quarantined)
+	Observer     DeliveryObserver
+}
+
+type DeliveryObserver interface {
+	ObserveDelivery(result string, duration time.Duration)
 }
 
 type TerminalError struct {
@@ -78,12 +83,16 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			currentBatch = commit.BatchID
 			attempt = 0
 		}
+		started := time.Now()
 		result, err := d.transport.Send(ctx, commit.Payload)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil && result.Class == 0 {
 			result.Class = ResultRetryable
+		}
+		if d.options.Observer != nil {
+			d.options.Observer.ObserveDelivery(resultLabel(result.Class), time.Since(started))
 		}
 		switch result.Class {
 		case ResultAccepted, ResultDuplicate:
@@ -123,6 +132,23 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		default:
 			return fmt.Errorf("transport returned unknown result class %d", result.Class)
 		}
+	}
+}
+
+func resultLabel(class ResultClass) string {
+	switch class {
+	case ResultAccepted:
+		return "accepted"
+	case ResultDuplicate:
+		return "duplicate"
+	case ResultRetryable:
+		return "retryable"
+	case ResultQuarantine:
+		return "quarantined"
+	case ResultTerminal:
+		return "terminal"
+	default:
+		return "invalid"
 	}
 }
 

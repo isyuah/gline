@@ -128,3 +128,20 @@ func TestGlineAgentConfigValidateReliableMode(t *testing.T) {
 		t.Fatal("Validate() error = nil, want reliable UUID error")
 	}
 }
+
+func TestGlineAgentConfigValidateRequiresLoopbackMetricsAddress(t *testing.T) {
+	cfg := validConfig()
+	cfg.Agent.ID = "22222222-2222-4222-8222-222222222222"
+	cfg.Pipelines[0].ID = "33333333-3333-4333-8333-333333333333"
+	cfg.Pipelines[0].Host = "node-1"
+	cfg.Sender.Type = "reliable"
+	cfg.Sender.Destination.Type = "gline"
+	cfg.Agent.MetricsAddr = "127.0.0.1:9109"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("loopback metrics address error = %v", err)
+	}
+	cfg.Agent.MetricsAddr = "0.0.0.0:9109"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("public metrics address was accepted")
+	}
+}
