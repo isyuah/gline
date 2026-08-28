@@ -9,6 +9,18 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('HttpApi', () => {
+  it('默认 fetch 绑定 globalThis，避免浏览器 Illegal invocation', async () => {
+    const fetcher = function (this: typeof globalThis) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation')
+      return Promise.resolve(jsonResponse({ projects: [] }))
+    }
+    vi.stubGlobal('fetch', fetcher)
+
+    const api = new HttpApi({ token: 'glk_test.secret' })
+
+    await expect(api.listProjects()).resolves.toEqual([])
+  })
+
   it('保留后端稳定错误码和 request id，供页面给出可操作错误', async () => {
     const fetcher = vi.fn(async () => jsonResponse({
       error: {

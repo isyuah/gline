@@ -99,7 +99,10 @@ export class HttpApi implements GlineApi {
   constructor(input: { baseUrl?: string; token: string; fetcher?: typeof fetch }) {
     this.baseUrl = (input.baseUrl || '/api/v1').replace(/\/$/, '')
     this.token = input.token
-    this.fetcher = input.fetcher ?? fetch
+    // Native browser fetch requires a Window/globalThis receiver. Storing the
+    // bare function and invoking it as `this.fetcher(...)` causes Chrome to
+    // throw `Illegal invocation` before any network request is made.
+    this.fetcher = input.fetcher ?? globalThis.fetch.bind(globalThis)
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
