@@ -98,7 +98,9 @@ The intended first workflow is:
 3. Create an API key with `ingest` and `agent:write` scopes. Store the one-time
    secret securely.
 4. Copy `examples/glineconf.yaml` to an ignored local file and replace the Agent
-   ID, Pipeline ID and API key.
+   ID, Pipeline ID and API key. If `.env` overrides `GLINE_HTTP_PORT`, update
+   the Agent destination URL to that published port as well (this worktree uses
+   `18080` because host port `8080` is already occupied).
 5. Create `data/demo-api.log`, start the Agent, then append lines to the file.
 6. Use the Logs page to search the ingested entries; inspect Agents, Usage,
    Audit and Retention for the operational view.
