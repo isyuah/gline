@@ -16,6 +16,11 @@
 - Documented the port override and a standalone deployment path in README and
   updated STATUS evidence. The browser remains pending manual user acceptance;
   no remote push or deployment was performed.
+- Fixed browser connection diagnostics after manual acceptance exposed a
+  generic network error: Compose now permits both `localhost` and `127.0.0.1`
+  Web origins for direct API access, the login form clearly recommends the
+  same-origin `/api/v1` path, and network errors report the attempted API base
+  without logging the credential.
 
 ## 2026-08-27 - Isolated implementation worktree
 

@@ -42,7 +42,7 @@ export function LoginPage() {
       <form onSubmit={submit}>
         <div className="form-heading"><KeyRound size={24} /><div><h2>连接 Gline Server</h2><p>使用具备管理或只读 Scope 的 API Token。</p></div></div>
         {error && <div className="inline-alert critical" role="alert">{error}</div>}
-        <label className="field"><span>API 地址</span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="/api/v1" autoComplete="url" /></label>
+        <label className="field"><span>API 地址</span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="/api/v1" autoComplete="url" /><small>Compose 控制台请保留 `/api/v1`，由同源代理连接 Server。</small></label>
         <label className="field"><span>API Token</span><input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="glk_project_prefix.secret" autoComplete="current-password" required={!mock} disabled={mock} /></label>
         <label className="check-field"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>在这台设备上保持登录</span></label>
         {import.meta.env.DEV && <div className="mock-option"><label className="check-field"><input type="checkbox" checked={mock} onChange={(event) => setMock(event.target.checked)} /><span>使用本地演示数据</span></label><small>显式开发开关，不会请求后端。</small></div>}

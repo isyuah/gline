@@ -74,6 +74,10 @@ Updated: 2026-08-28
   scoped API key; a batch returned `accepted`, the identical retry returned
   `duplicate`, a filtered query returned one entry, Usage returned one bucket,
   and the low-cardinality ingest/query/admission metric families were present.
+- Direct API CORS preflight now returns 204 for both `localhost:4173` and
+  `127.0.0.1:4173`; the Web same-origin proxy returns 200. The console reports
+  the attempted API base on a genuine browser network failure without exposing
+  the token.
 - Vite dev runtime: `HTTP 200` at `http://127.0.0.1:5173/`.
 - Focused reliability coverage includes mismatched ACK rejection, durable local
   quarantine and discard, continuation after a bad batch, systemic stop with a

@@ -86,9 +86,10 @@ reaches the Server over the Compose network and needs no corresponding change.
 When running the Agent outside Docker, use the published Server port in its
 `destination.params.url`.
 
-Open `http://localhost:4173`. Sign in with the bootstrap token from `.env` and
-an empty Base URL. The console talks to the Server through the web container's
-same-origin proxy.
+Open `http://localhost:4173` or `http://127.0.0.1:4173`. Sign in with the
+bootstrap token from `.env` and keep the API address at `/api/v1`. The console
+then talks to the Server through the web container's same-origin proxy; direct
+Server URLs are only needed when the console is hosted separately.
 
 The intended first workflow is:
 

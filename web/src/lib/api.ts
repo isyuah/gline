@@ -103,9 +103,10 @@ export class HttpApi implements GlineApi {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const url = `${this.baseUrl}${path}`
     let response: Response
     try {
-      response = await this.fetcher(`${this.baseUrl}${path}`, {
+      response = await this.fetcher(url, {
         ...init,
         headers: {
           Accept: 'application/json',
@@ -115,9 +116,13 @@ export class HttpApi implements GlineApi {
         },
       })
     } catch (cause) {
+      // Keep the token out of diagnostics while making the actual target
+      // visible in DevTools. This is the useful distinction between a
+      // browser/CORS/port failure and a server-side 4xx/5xx response.
+      console.error('Gline API network error', { url, cause })
       throw new ApiError(0, {
         code: 'network_error',
-        message: '无法连接 Gline Server，请检查 API 地址和服务状态。',
+        message: `无法连接 Gline Server（API 地址：${this.baseUrl}）。请检查地址、端口和浏览器 CORS。`,
         details: cause,
       })
     }
