@@ -116,7 +116,9 @@ In another terminal, append a line:
 Add-Content -LiteralPath data\demo-api.log -Value '{"level":"info","message":"hello from gline"}'
 ```
 
-Useful endpoints are `http://localhost:8080/livez`, `/readyz` and `/metrics`.
+Useful endpoints are `http://localhost:8080/livez`, `/readyz` and `/metrics` by
+default. If `.env` sets `GLINE_HTTP_PORT=18080`, use
+`http://localhost:18080/livez` (and the same port for the other endpoints).
 `/livez` never checks PostgreSQL; `/readyz` checks the database and turns
 unavailable as soon as graceful shutdown begins.
 Stop the stack without deleting its named PostgreSQL volume:
