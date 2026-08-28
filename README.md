@@ -79,6 +79,13 @@ docker compose up --build -d
 docker compose ps
 ```
 
+The Server is published on `GLINE_HTTP_PORT` (default `8080`) and the console
+on `GLINE_WEB_PORT` (default `4173`). If port 8080 is already used by another
+local service, set `GLINE_HTTP_PORT=18080` in `.env`; the Web container still
+reaches the Server over the Compose network and needs no corresponding change.
+When running the Agent outside Docker, use the published Server port in its
+`destination.params.url`.
+
 Open `http://localhost:4173`. Sign in with the bootstrap token from `.env` and
 an empty Base URL. The console talks to the Server through the web container's
 same-origin proxy.
@@ -151,6 +158,52 @@ this Agent-local path. They become active when a later asynchronous parser or
 indexer can durably persist a failed payload before acknowledging it. The
 current synchronous ingest path returns an error and leaves the Agent copy
 authoritative instead of weakening commit-after-ACK semantics.
+
+## Standalone Deployment
+
+Compose is the recommended local acceptance topology, but every runtime piece
+can be deployed independently. The Server is a stateless Go process once
+PostgreSQL is externalized; the Agent is an independent process with its own
+local WAL; the Web console is a static bundle that only needs a reverse proxy.
+
+1. Provision PostgreSQL 17 (or a compatible PostgreSQL version), create a
+   database and user, and set `GLINE_DATABASE_URL`,
+   `GLINE_BOOTSTRAP_TOKEN` and `GLINE_API_KEY_PEPPER` in the Server process
+   environment. Keep all three credentials out of Git and logs.
+2. Build and run the Server:
+
+   ```powershell
+   go build -trimpath -o dist/gline-server ./cmd/server
+   .\dist\gline-server.exe
+   ```
+
+   The process applies embedded migrations at startup. Put TLS, authentication
+   at the network edge, and request limits in the deployment's reverse proxy;
+   expose `/readyz` for readiness and `/livez` for liveness.
+3. Build the console and serve `web/dist` from Nginx, Caddy or another static
+   server. Proxy `/api/`, `/healthz`, `/livez` and `/readyz` to the Server. The
+   checked-in `web/nginx.conf` is a minimal reference configuration for this
+   arrangement.
+
+   ```powershell
+   Set-Location web
+   pnpm install --frozen-lockfile
+   pnpm build
+   ```
+
+4. Build the Agent and run it on the machine that owns the log files:
+
+   ```powershell
+   go build -trimpath -o dist/gline-agent ./cmd/agent
+   .\dist\gline-agent.exe -config .glineconf
+   ```
+
+   Its `spool_path`, checkpoints and quarantine are local durable state. Give
+   it only a project-scoped API key, and point its destination URL at the
+   Server's published address. This split deployment is also the first step for
+   later horizontal Server replicas behind a load balancer; PostgreSQL remains
+   the source of truth, while the current admission limiter is intentionally
+   per process and must be redesigned before claiming cluster-wide quotas.
 
 ## Local Development
 

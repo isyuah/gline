@@ -1,5 +1,22 @@
 # Gline Development Log
 
+## 2026-08-28 - Compose runtime acceptance slice
+
+- Verified Docker Engine 28.5.1 and Docker Compose v2.40.2 in the isolated
+  `codex/full-gline` worktree.
+- Added `web/.dockerignore` so local `node_modules`, build output and logs are
+  excluded from the Web image context; switched the Web runtime base to the
+  locally available `nginx:1.29-alpine`.
+- Started the named-volume Compose stack with PostgreSQL 17, the Go Server and
+  the React/Nginx console. Because a separate user-owned service occupies host
+  port 8080, the local `.env` publishes Gline Server on 18080 and Web on 4173.
+- Verified HTTP liveness, readiness, metrics, Web serving, Project/Agent/
+  Pipeline/key creation, accepted ingest, duplicate retry, filtered query and
+  Usage accounting against the live PostgreSQL-backed stack.
+- Documented the port override and a standalone deployment path in README and
+  updated STATUS evidence. The browser remains pending manual user acceptance;
+  no remote push or deployment was performed.
+
 ## 2026-08-27 - Isolated implementation worktree
 
 - Created checkpoint commit `6c5b1e6` after Go build, unit tests, race tests, vet,

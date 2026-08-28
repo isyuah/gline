@@ -1,6 +1,6 @@
 # Gline Implementation Status
 
-Updated: 2026-08-27
+Updated: 2026-08-28
 
 ## Current Stable Boundary
 
@@ -63,6 +63,17 @@ Updated: 2026-08-27
 - `pnpm lint`, `pnpm test`, `pnpm build`: passed; lint has zero warnings and
   four frontend tests pass.
 - `docker compose config --quiet`: passed with non-secret validation values.
+- `docker compose up --build -d`: passed on Docker Engine 28.5.1 / Compose
+  v2.40.2 after the Web build context was reduced with `web/.dockerignore`.
+  PostgreSQL, Server and Web containers are currently running in
+  `E:\Proj\gline-full`; this local instance publishes Server on `18080` because
+  another user-owned process already occupies `8080`, and publishes Web on
+  `4173`.
+- Compose runtime smoke: `/livez`, `/readyz`, `/metrics` and the Web home page
+  returned HTTP 200. The HTTP workflow created a Project, Agent, Pipeline and
+  scoped API key; a batch returned `accepted`, the identical retry returned
+  `duplicate`, a filtered query returned one entry, Usage returned one bucket,
+  and the low-cardinality ingest/query/admission metric families were present.
 - Vite dev runtime: `HTTP 200` at `http://127.0.0.1:5173/`.
 - Focused reliability coverage includes mismatched ACK rejection, durable local
   quarantine and discard, continuation after a bad batch, systemic stop with a
@@ -76,27 +87,26 @@ Updated: 2026-08-27
 - The GitHub Actions workflow was locally reviewed and its commands were run in
   their equivalent local forms; it has not yet executed on GitHub.
 
-## Remaining Runtime Gate
+## Remaining Acceptance Work
 
-- The opt-in PostgreSQL integration test and full Compose E2E have not run.
-- Docker Desktop 4.49.0 crashes before starting its engine because it cannot
-  remove `C:\Users\Yu\AppData\Local\Docker\run\dockerInference`, a stale
-  reparse-point socket. No Docker reset, volume deletion or socket deletion was
-  performed.
-- Until PostgreSQL is available, the Server, Agent-to-Server ingest and complete
-  browser workflow are implemented and statically verified but not marked
-  runnable or accepted.
+- The tagged PostgreSQL suite is still opt-in and has not been pointed at a
+  disposable test database in this worktree. The Compose smoke covers the
+  production-shaped HTTP-to-PostgreSQL path; CI remains the authoritative
+  isolated integration run.
+- The browser workflow remains to be manually accepted by the user. Automated
+  checks establish that the Web bundle is served and its same-origin API proxy
+  is reachable; they do not claim visual or interaction acceptance.
 
 ## Evidence Levels
 
 | Area | Implemented | Verified | Integrated | Runnable | Accepted |
 | --- | --- | --- | --- | --- | --- |
 | Reliable Agent | yes | yes | protocol-level | blocked by Server runtime | no |
-| Control plane | yes | yes | yes | blocked by PostgreSQL | no |
-| PostgreSQL ingest/query | yes | unit/race/tag-build | code-level | blocked by Docker | no |
-| Operations and maintenance | yes | yes | yes | blocked by PostgreSQL | no |
-| Web application | yes | yes | API contract | standalone dev server | no |
-| Compose environment | yes | config only | topology | Docker engine blocked | no |
+| Control plane | yes | yes | yes | yes (Compose) | no |
+| PostgreSQL ingest/query | yes | unit/race/tag-build + Compose smoke | yes | yes (Compose) | no |
+| Operations and maintenance | yes | yes | yes | yes (Compose) | no |
+| Web application | yes | yes | API contract + served bundle | yes (Compose) | no |
+| Compose environment | yes | config + image build | yes | yes | no |
 
 Server-side Quarantine tables, lease recovery and replay APIs are implemented
 but intentionally have no producer in the synchronous ingest path. Agent-local
