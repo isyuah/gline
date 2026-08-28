@@ -196,6 +196,7 @@ local WAL; the Web console is a static bundle that only needs a reverse proxy.
 4. Build the Agent and run it on the machine that owns the log files:
 
    ```powershell
+   Set-Location ..
    go build -trimpath -o dist/gline-agent ./cmd/agent
    .\dist\gline-agent.exe -config .glineconf
    ```
