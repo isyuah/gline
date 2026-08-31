@@ -22,6 +22,7 @@ type entries struct {
 	queries     []domain.EntryQuery
 	err         error
 	deadline    time.Time
+	observedAt  time.Time
 	hasDeadline bool
 }
 
@@ -34,6 +35,7 @@ func (blockingEntries) List(ctx context.Context, _ domain.EntryQuery) (domain.En
 
 func (r *entries) List(ctx context.Context, query domain.EntryQuery) (domain.EntryPage, error) {
 	r.queries = append(r.queries, query)
+	r.observedAt = time.Now()
 	r.deadline, r.hasDeadline = ctx.Deadline()
 	if r.err != nil {
 		return domain.EntryPage{}, r.err
@@ -114,14 +116,13 @@ func TestSearchBoundsRepositoryExecutionAndPreservesShorterClientDeadline(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-		startedAt := time.Now()
 		if _, err := service.Search(t.Context(), queryPrincipal(), params); err != nil {
 			t.Fatal(err)
 		}
 		if !repository.hasDeadline {
 			t.Fatal("repository context has no deadline")
 		}
-		if remaining := repository.deadline.Sub(startedAt); remaining <= 0 || remaining > config.ExecutionTimeout {
+		if remaining := repository.deadline.Sub(repository.observedAt); remaining <= 0 || remaining > config.ExecutionTimeout {
 			t.Fatalf("repository deadline remaining = %v, want within (0, %v]", remaining, config.ExecutionTimeout)
 		}
 	})

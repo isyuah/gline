@@ -184,10 +184,10 @@ func TestDurableFileSourceRestartsAtBeginningOfRecreatedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpoint := Checkpoint{SourceKey: record.SourceKey, FileIdentity: record.FileIdentity, OffsetBytes: record.EndOffset, ObservedAt: record.ObservedAt}
-	if err := os.Remove(path); err != nil {
+	rotatedPath := path + ".rotated"
+	if err := os.Rename(path, rotatedPath); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Millisecond)
 	if err := os.WriteFile(path, []byte("INFO new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
