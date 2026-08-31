@@ -173,3 +173,6 @@
 - Documented a staged reading strategy: first run the end-to-end flow, then
   read the architecture and core Agent/Server paths, and use focused module
   walkthroughs where needed.
+- After the first branch push, verified that the repository CI trigger only
+  covered `master`; added `codex/**` so this development branch also executes
+  the full workflow on push.
