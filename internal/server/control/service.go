@@ -44,6 +44,7 @@ type AgentRepository interface {
 type PipelineRepository interface {
 	Create(context.Context, domain.Pipeline) (domain.Pipeline, error)
 	Get(context.Context, domain.ProjectID, domain.PipelineID) (domain.Pipeline, error)
+	ListByAgent(context.Context, domain.ProjectID, domain.AgentID, int) ([]domain.Pipeline, error)
 	UpdateConfig(context.Context, domain.ProjectID, domain.PipelineID, int64, json.RawMessage) (domain.Pipeline, error)
 	SetDesiredStatus(context.Context, domain.ProjectID, domain.PipelineID, domain.PipelineStatus) (domain.Pipeline, error)
 	ReportStatus(context.Context, domain.ProjectID, domain.PipelineID, domain.ReportedPipelineStatus, time.Time, *string) (domain.Pipeline, error)
@@ -332,9 +333,10 @@ func (s *Service) RegisterAgent(ctx context.Context, principal serverauth.Princi
 }
 
 type PipelineReport struct {
-	ID        domain.PipelineID
-	Status    domain.ReportedPipelineStatus
-	LastError *string
+	ID            domain.PipelineID
+	ConfigVersion int64
+	Status        domain.ReportedPipelineStatus
+	LastError     *string
 }
 
 type HeartbeatInput struct {
@@ -345,36 +347,47 @@ type HeartbeatInput struct {
 	Pipelines []PipelineReport
 }
 
-func (s *Service) Heartbeat(ctx context.Context, principal serverauth.Principal, input HeartbeatInput) (domain.Agent, error) {
+type PipelineControl struct {
+	ID            domain.PipelineID
+	DesiredStatus domain.PipelineStatus
+	ConfigVersion int64
+}
+
+type HeartbeatResult struct {
+	Agent     domain.Agent
+	Pipelines []PipelineControl
+}
+
+func (s *Service) Heartbeat(ctx context.Context, principal serverauth.Principal, input HeartbeatInput) (HeartbeatResult, error) {
 	if err := principal.Require(domain.ScopeAgentWrite); err != nil {
-		return domain.Agent{}, err
+		return HeartbeatResult{}, err
 	}
 	if err := principal.RequireProject(input.ProjectID); err != nil {
-		return domain.Agent{}, err
+		return HeartbeatResult{}, err
 	}
 	if err := principal.RequireAgent(input.AgentID); err != nil {
-		return domain.Agent{}, err
+		return HeartbeatResult{}, err
 	}
 	if len(input.Pipelines) > 256 || len(input.Version) > 128 {
-		return domain.Agent{}, fmt.Errorf("%w: heartbeat limits", domain.ErrInvalid)
+		return HeartbeatResult{}, fmt.Errorf("%w: heartbeat limits", domain.ErrInvalid)
 	}
 	now := s.now().UTC()
-	var agent domain.Agent
+	var result HeartbeatResult
 	err := s.withinTx(ctx, func(repos Repositories) error {
-		project, err := repos.Projects.Get(ctx, input.ProjectID)
-		if err != nil {
+		if repos.Projects == nil || repos.Agents == nil || repos.Pipelines == nil {
+			return errors.New("control transaction is missing heartbeat dependencies")
+		}
+		if _, err := repos.Projects.Get(ctx, input.ProjectID); err != nil {
 			return err
 		}
-		if err := project.CanIngest(); err != nil {
-			return err
-		}
-		agent, err = repos.Agents.Heartbeat(ctx, input.ProjectID, input.AgentID, strings.TrimSpace(input.Version), now, input.IP)
+		var err error
+		result.Agent, err = repos.Agents.Heartbeat(ctx, input.ProjectID, input.AgentID, strings.TrimSpace(input.Version), now, input.IP)
 		if err != nil {
 			return err
 		}
 		seen := make(map[domain.PipelineID]struct{}, len(input.Pipelines))
 		for _, report := range input.Pipelines {
-			if !report.ID.Valid() || !report.Status.Valid() {
+			if !report.ID.Valid() || report.ConfigVersion <= 0 || !report.Status.Valid() {
 				return fmt.Errorf("%w: pipeline report", domain.ErrInvalid)
 			}
 			if _, duplicate := seen[report.ID]; duplicate {
@@ -395,9 +408,17 @@ func (s *Service) Heartbeat(ctx context.Context, principal serverauth.Principal,
 				return err
 			}
 		}
+		pipelines, err := repos.Pipelines.ListByAgent(ctx, input.ProjectID, input.AgentID, 256)
+		if err != nil {
+			return err
+		}
+		result.Pipelines = make([]PipelineControl, len(pipelines))
+		for index, pipeline := range pipelines {
+			result.Pipelines[index] = PipelineControl{ID: pipeline.ID, DesiredStatus: pipeline.Status, ConfigVersion: pipeline.ConfigVersion}
+		}
 		return nil
 	})
-	return agent, err
+	return result, err
 }
 
 type CreatePipelineInput struct {

@@ -82,6 +82,13 @@ func (r *pipelineRepository) Get(context.Context, domain.ProjectID, domain.Pipel
 	return r.pipeline, nil
 }
 
+func (r *pipelineRepository) ListByAgent(_ context.Context, projectID domain.ProjectID, agentID domain.AgentID, _ int) ([]domain.Pipeline, error) {
+	if r.pipeline.ProjectID == projectID && r.pipeline.AgentID == agentID {
+		return []domain.Pipeline{r.pipeline}, nil
+	}
+	return nil, nil
+}
+
 func (r *pipelineRepository) UpdateConfig(_ context.Context, _ domain.ProjectID, _ domain.PipelineID, _ int64, config json.RawMessage) (domain.Pipeline, error) {
 	r.updateCalls++
 	r.pipeline.Config = config
@@ -201,9 +208,29 @@ func TestHeartbeatRejectsPipelineOwnedByAnotherAgent(t *testing.T) {
 	}
 	service, _ := NewService(within, nil, nil, func() time.Time { return now }, []byte("0123456789abcdef0123456789abcdef"))
 	principal := serverauth.Principal{KeyID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ProjectID: controlProjectID, AgentID: &agentID, Scopes: map[domain.Scope]struct{}{domain.ScopeAgentWrite: {}}}
-	_, err := service.Heartbeat(context.Background(), principal, HeartbeatInput{ProjectID: controlProjectID, AgentID: agentID, Version: "1", Pipelines: []PipelineReport{{ID: pipelineID, Status: domain.PipelineRunning}}})
+	_, err := service.Heartbeat(context.Background(), principal, HeartbeatInput{ProjectID: controlProjectID, AgentID: agentID, Version: "1", Pipelines: []PipelineReport{{ID: pipelineID, ConfigVersion: 1, Status: domain.PipelineRunning}}})
 	if !errors.Is(err, ErrResourceBinding) {
 		t.Fatalf("heartbeat error = %v", err)
+	}
+}
+
+func TestHeartbeatReturnsDesiredPipelineControl(t *testing.T) {
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	agentID := domain.AgentID("22222222-2222-2222-2222-222222222222")
+	pipelineID := domain.PipelineID("33333333-3333-3333-3333-333333333333")
+	projects := &projectRepository{project: domain.Project{ID: controlProjectID, Slug: "demo", Name: "Demo", Status: domain.ProjectActive}}
+	pipelines := &pipelineRepository{pipeline: domain.Pipeline{ID: pipelineID, ProjectID: controlProjectID, AgentID: agentID, Name: "api", Service: "api", Config: []byte(`{}`), ConfigVersion: 3, Status: domain.PipelinePaused, ReportedStatus: domain.PipelineRunning}}
+	within := func(ctx context.Context, fn func(Repositories) error) error {
+		return fn(Repositories{Projects: projects, Agents: agentRepository{}, Pipelines: pipelines})
+	}
+	service, _ := NewService(within, nil, nil, func() time.Time { return now }, []byte("0123456789abcdef0123456789abcdef"))
+	principal := serverauth.Principal{KeyID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ProjectID: controlProjectID, AgentID: &agentID, Scopes: map[domain.Scope]struct{}{domain.ScopeAgentWrite: {}}}
+	result, err := service.Heartbeat(t.Context(), principal, HeartbeatInput{ProjectID: controlProjectID, AgentID: agentID, Version: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Pipelines) != 1 || result.Pipelines[0].ID != pipelineID || result.Pipelines[0].DesiredStatus != domain.PipelinePaused || result.Pipelines[0].ConfigVersion != 3 {
+		t.Fatalf("heartbeat result = %+v", result)
 	}
 }
 

@@ -38,7 +38,9 @@ func (f fakeAuthenticator) Authenticate(context.Context, string) (serverauth.Pri
 	return f.principal, f.err
 }
 
-type fakeControl struct{}
+type fakeControl struct {
+	heartbeatResult control.HeartbeatResult
+}
 
 func (fakeControl) CreateProject(context.Context, serverauth.Principal, control.CreateProjectInput) (domain.Project, error) {
 	return domain.Project{}, nil
@@ -55,8 +57,8 @@ func (fakeControl) RevokeKey(context.Context, serverauth.Principal, domain.Proje
 func (fakeControl) RegisterAgent(context.Context, serverauth.Principal, control.RegisterAgentInput) (domain.Agent, error) {
 	return domain.Agent{}, nil
 }
-func (fakeControl) Heartbeat(context.Context, serverauth.Principal, control.HeartbeatInput) (domain.Agent, error) {
-	return domain.Agent{}, nil
+func (f fakeControl) Heartbeat(context.Context, serverauth.Principal, control.HeartbeatInput) (control.HeartbeatResult, error) {
+	return f.heartbeatResult, nil
 }
 func (fakeControl) CreatePipeline(context.Context, serverauth.Principal, control.CreatePipelineInput) (domain.Pipeline, error) {
 	return domain.Pipeline{}, nil
@@ -312,6 +314,21 @@ func TestIngestRouteDecodesNormalizesAndForwardsAuthenticatedProject(t *testing.
 	}
 	if !strings.Contains(response.Body.String(), `"status":"accepted"`) {
 		t.Fatalf("body=%s", response.Body)
+	}
+}
+
+func TestHeartbeatReturnsAgentControlSnapshot(t *testing.T) {
+	agentID := testAgentID
+	dependencies := testDependencies(testPrincipal(domain.ScopeAgentWrite))
+	dependencies.Control = fakeControl{heartbeatResult: control.HeartbeatResult{
+		Agent:     domain.Agent{ID: agentID, ProjectID: testProjectID, Name: "agent", Hostname: "host", Status: domain.AgentActive},
+		Pipelines: []control.PipelineControl{{ID: testPipelineID, DesiredStatus: domain.PipelinePaused, ConfigVersion: 4}},
+	}}
+	handler := testRouter(t, dependencies)
+	body := `{"version":"1.0.0","pipelines":[{"id":"33333333-3333-4333-8333-333333333333","config_version":4,"status":"running"}]}`
+	response := perform(handler, http.MethodPost, "/api/v1/agents/"+string(agentID)+"/heartbeat", "api-key", body)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"desired_status":"paused"`) || !strings.Contains(response.Body.String(), `"config_version":4`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

@@ -82,7 +82,9 @@ func mapError(err error) *apiError {
 		return &apiError{Status: http.StatusForbidden, Code: "tenant_mismatch", Message: "resource belongs to another authentication boundary", Cause: err}
 	case errors.Is(err, postgres.ErrNotFound):
 		return &apiError{Status: http.StatusNotFound, Code: "not_found", Message: "resource was not found", Cause: err}
-	case errors.Is(err, postgres.ErrConflict), errors.Is(err, domain.ErrIdempotencyConflict), errors.Is(err, domain.ErrInvalidTransition), errors.Is(err, control.ErrVersionConflict):
+	case errors.Is(err, domain.ErrIdempotencyConflict):
+		return &apiError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "batch id was already committed with a different payload", Cause: err}
+	case errors.Is(err, postgres.ErrConflict), errors.Is(err, domain.ErrInvalidTransition), errors.Is(err, control.ErrVersionConflict):
 		return &apiError{Status: http.StatusConflict, Code: "conflict", Message: "resource state conflicts with the request", Cause: err}
 	case errors.Is(err, control.ErrResourceBinding):
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_resource_binding", Message: "resource does not belong to the requested parent", Cause: err}

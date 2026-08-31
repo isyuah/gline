@@ -27,7 +27,8 @@ func TestHTTPTransportClassifiesResponses(t *testing.T) {
 		{"bad request", 400, `{"error":{"code":"invalid"}}`, ResultQuarantine},
 		{"unauthorized", 401, `{}`, ResultTerminal},
 		{"forbidden", 403, `{}`, ResultTerminal},
-		{"conflict", 409, `{"error":{"code":"conflict"}}`, ResultQuarantine},
+		{"idempotency conflict", 409, `{"error":{"code":"idempotency_conflict"}}`, ResultQuarantine},
+		{"resource unavailable", 409, `{"error":{"code":"resource_unavailable"}}`, ResultBlocked},
 		{"rate limited", 429, `{}`, ResultRetryable},
 		{"server failure", 503, `{}`, ResultRetryable},
 	}
@@ -186,6 +187,44 @@ func TestDispatcherStopsOnSystemicTerminalFailureWithoutRemovingBatch(t *testing
 	var terminal *TerminalError
 	if !errors.As(err, &terminal) || terminal.HTTPCode != 401 || len(store.Pending()) != 1 || len(store.Quarantined()) != 0 {
 		t.Fatalf("Run() error=%v pending=%+v quarantined=%+v", err, store.Pending(), store.Quarantined())
+	}
+}
+
+func TestDispatcherSkipsBlockedBatchSoOtherPipelinesCanDrain(t *testing.T) {
+	store := openDispatcherSpool(t)
+	for _, id := range []string{"batch-1", "batch-2"} {
+		if err := store.Commit(t.Context(), spool.Commit{
+			BatchID: id, Payload: []byte(`{"batch_id":"` + id + `"}`),
+			Checkpoint: source.Checkpoint{SourceKey: id, FileIdentity: "file-1", OffsetBytes: 10, ObservedAt: time.Now()},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dispatcher, err := NewDispatcher(store, &recordingTransport{results: []SendResult{
+		{Class: ResultBlocked, StatusCode: 409, Code: "resource_unavailable"},
+		{Class: ResultAccepted},
+		{Class: ResultAccepted},
+	}}, DispatcherOptions{BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- dispatcher.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for len(store.Pending()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	transport := dispatcher.transport.(*recordingTransport)
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	if len(transport.payloads) != 3 || string(transport.payloads[0]) != `{"batch_id":"batch-1"}` ||
+		string(transport.payloads[1]) != `{"batch_id":"batch-2"}` || string(transport.payloads[2]) != `{"batch_id":"batch-1"}` {
+		t.Fatalf("delivery order = %q", transport.payloads)
 	}
 }
 

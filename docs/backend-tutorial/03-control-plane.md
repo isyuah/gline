@@ -2,9 +2,12 @@
 
 控制平面是让 Gline 从“日志上传接口”变成“可运营后端”的关键。它管理谁拥有数据、哪些 Agent 被允许接入、哪些采集管道正在运行以及谁执行过危险操作。接入平面处理日志数据流，控制平面处理配置和身份流；两者共享 Project 边界，但不混淆请求类型。
 
-## 1. 当前代码差距
+## 1. 实现前基线
 
-当前仓库已经出现 Project/API Key/Scope 的设计方向，但没有完整的管理生命周期。通常原型会把 Key 写死在环境变量，把 Agent ID 当作请求字段，把 Pipeline 配置放在本地文件里。这样可以跑 demo，却无法回答：
+> 本节的问题清单记录控制平面实现前的缺口。当前版本已经提供 Project、
+> Key、Agent、Pipeline 的生命周期 API，并通过心跳返回期望控制状态。
+
+在实现前，仓库已经出现 Project/API Key/Scope 的设计方向，但没有完整的管理生命周期。通常原型会把 Key 写死在环境变量，把 Agent ID 当作请求字段，把 Pipeline 配置放在本地文件里。这样可以跑 demo，却无法回答：
 
 * Key 如何安全创建、展示、轮换和吊销？
 * Project 禁用后，已有 Agent 和批次如何处理？
@@ -38,8 +41,8 @@ Control API
       -> AuditRepository
 
 Agent
-  -> Heartbeat API (agent scope)
-  -> Control Service (只更新自己的 Agent/Pipeline 状态)
+  -> Heartbeat API (agent scope, reports state and receives desired control)
+  -> Control Service (只更新自己的 Agent/Pipeline 状态并返回控制快照)
 ```
 
 控制平面 API 不能让 Agent 代替管理员创建 Project 或读取其他 Agent 的配置。Agent 只拥有注册后分配的 `agent` scope，以及按 Project 约束的心跳/状态上报权限。
@@ -195,6 +198,18 @@ Authorization: Bearer <agent-key>
 
 服务端从认证上下文得到 Agent 归属的 Project，并验证路径中的 `agentID` 属于该 Project。Agent 不能通过 body 传入另一个 Project 的 ID。心跳更新应是有界的：限制 pipeline 数量、错误摘要长度和 backlog 字段范围。
 
+成功响应包含当前 Agent 所有 Pipeline 的控制快照：
+
+```json
+{
+  "control": {
+    "pipelines": [
+      {"id":"uuid","desired_status":"paused","config_version":3}
+    ]
+  }
+}
+```
+
 ```sql
 UPDATE agents
 SET version = $3,
@@ -229,6 +244,10 @@ WHERE status = 'active'
 ## 7. Pipeline 配置和状态
 
 ### 7.1 配置版本
+
+当前可靠 Agent 使用心跳返回的控制快照执行状态门控。它不会在线替换文件
+source；如果 `config_version` 不一致，Agent 报告 `error` 并停止读取，部署
+匹配版本后通过下一次心跳恢复。这是第一版可验证的配置发布边界。
 
 Pipeline 的配置更新使用乐观版本：
 

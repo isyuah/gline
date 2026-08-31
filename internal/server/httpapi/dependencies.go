@@ -22,7 +22,7 @@ type ControlService interface {
 	CreateKey(context.Context, serverauth.Principal, control.CreateKeyInput) (control.CreatedKey, error)
 	RevokeKey(context.Context, serverauth.Principal, domain.ProjectID, domain.APIKeyID) (domain.APIKey, error)
 	RegisterAgent(context.Context, serverauth.Principal, control.RegisterAgentInput) (domain.Agent, error)
-	Heartbeat(context.Context, serverauth.Principal, control.HeartbeatInput) (domain.Agent, error)
+	Heartbeat(context.Context, serverauth.Principal, control.HeartbeatInput) (control.HeartbeatResult, error)
 	CreatePipeline(context.Context, serverauth.Principal, control.CreatePipelineInput) (domain.Pipeline, error)
 	UpdatePipelineConfig(context.Context, serverauth.Principal, domain.ProjectID, domain.PipelineID, int64, json.RawMessage) (domain.Pipeline, error)
 	SetPipelineStatus(context.Context, serverauth.Principal, domain.ProjectID, domain.PipelineID, domain.PipelineStatus) (domain.Pipeline, error)

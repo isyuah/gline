@@ -66,22 +66,15 @@ func NewDispatcher(store *spool.WAL, transport Transport, options DispatcherOpti
 }
 
 func (d *Dispatcher) Run(ctx context.Context) error {
-	attempt := 0
-	currentBatch := ""
+	attempts := make(map[string]int)
+	blockedUntil := make(map[string]time.Time)
 	for {
-		pending := d.spool.Pending()
-		if len(pending) == 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-d.spool.Changed():
-				continue
+		commit, wait := d.nextPending(blockedUntil)
+		if commit == nil {
+			if err := waitForDispatcherEvent(ctx, d.spool.Changed(), wait); err != nil {
+				return err
 			}
-		}
-		commit := pending[0]
-		if commit.BatchID != currentBatch {
-			currentBatch = commit.BatchID
-			attempt = 0
+			continue
 		}
 		started := time.Now()
 		result, err := d.transport.Send(ctx, commit.Payload)
@@ -99,24 +92,28 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			if err := d.spool.Ack(ctx, commit.BatchID); err != nil {
 				return fmt.Errorf("persist ACK for batch %s: %w", commit.BatchID, err)
 			}
-			currentBatch = ""
-			attempt = 0
+			delete(attempts, commit.BatchID)
+			delete(blockedUntil, commit.BatchID)
 		case ResultRetryable:
-			attempt++
-			delay := Backoff(attempt, d.options.BaseDelay, d.options.MaxDelay, d.options.Jitter, d.options.Random)
+			attempts[commit.BatchID]++
+			delay := Backoff(attempts[commit.BatchID], d.options.BaseDelay, d.options.MaxDelay, d.options.Jitter, d.options.Random)
 			if result.RetryAfter > delay {
 				delay = result.RetryAfter
 			}
 			if delay > d.options.MaxDelay {
 				delay = d.options.MaxDelay
 			}
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
+			blockedUntil[commit.BatchID] = d.options.Clock().Add(delay)
+		case ResultBlocked:
+			attempts[commit.BatchID]++
+			delay := Backoff(attempts[commit.BatchID], d.options.BaseDelay, d.options.MaxDelay, d.options.Jitter, d.options.Random)
+			if result.RetryAfter > delay {
+				delay = result.RetryAfter
 			}
+			if delay > d.options.MaxDelay {
+				delay = d.options.MaxDelay
+			}
+			blockedUntil[commit.BatchID] = d.options.Clock().Add(delay)
 		case ResultQuarantine:
 			quarantined, quarantineErr := d.spool.Quarantine(ctx, commit.BatchID, result.StatusCode, result.Code, d.options.Clock())
 			if quarantineErr != nil {
@@ -125,13 +122,61 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			if d.options.OnQuarantine != nil {
 				d.options.OnQuarantine(quarantined)
 			}
-			currentBatch = ""
-			attempt = 0
+			delete(attempts, commit.BatchID)
+			delete(blockedUntil, commit.BatchID)
 		case ResultTerminal:
 			return &TerminalError{BatchID: commit.BatchID, HTTPCode: result.StatusCode, ErrorCode: result.Code}
 		default:
 			return fmt.Errorf("transport returned unknown result class %d", result.Class)
 		}
+	}
+}
+
+func (d *Dispatcher) nextPending(blockedUntil map[string]time.Time) (*spool.Commit, time.Duration) {
+	if len(blockedUntil) == 0 {
+		commit, exists := d.spool.Peek()
+		if !exists {
+			return nil, 0
+		}
+		return &commit, 0
+	}
+	now := d.options.Clock()
+	pending := d.spool.Pending()
+	if len(pending) == 0 {
+		return nil, 0
+	}
+	var earliest time.Time
+	for index := range pending {
+		commit := pending[index]
+		blocked, exists := blockedUntil[commit.BatchID]
+		if !exists || !blocked.After(now) {
+			return &commit, 0
+		}
+		if earliest.IsZero() || blocked.Before(earliest) {
+			earliest = blocked
+		}
+	}
+	return nil, earliest.Sub(now)
+}
+
+func waitForDispatcherEvent(ctx context.Context, changed <-chan struct{}, wait time.Duration) error {
+	if wait <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+			return nil
+		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-changed:
+		return nil
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -147,6 +192,8 @@ func resultLabel(class ResultClass) string {
 		return "quarantined"
 	case ResultTerminal:
 		return "terminal"
+	case ResultBlocked:
+		return "blocked"
 	default:
 		return "invalid"
 	}

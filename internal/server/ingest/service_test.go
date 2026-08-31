@@ -107,6 +107,27 @@ func TestAcceptSeparatesAcceptedDuplicateAndConflict(t *testing.T) {
 	}
 }
 
+func TestAcceptDrainsPausedPipelineButRejectsDisabledPipeline(t *testing.T) {
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		status  domain.PipelineStatus
+		wantErr error
+	}{
+		{name: "paused backlog drains", status: domain.PipelinePaused},
+		{name: "disabled is a hard boundary", status: domain.PipelineDisabled, wantErr: ErrPipelineUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			batches := &batchRepo{inserted: true}
+			service, _ := NewService(testWithinTx(batches, &usageRepo{}, nil, test.status), func() time.Time { return now })
+			_, err := service.Accept(t.Context(), testPrincipal(), testBatch(now))
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Accept() error = %v, want %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestAcceptCommitsOnlyAcceptedAdmissionCost(t *testing.T) {
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -182,12 +203,16 @@ type fakeReservation struct {
 func (r *fakeReservation) Commit()  { r.commits++ }
 func (r *fakeReservation) Release() { r.releases++ }
 
-func testWithinTx(batches *batchRepo, usage *usageRepo, commitErr error) WithinTx {
+func testWithinTx(batches *batchRepo, usage *usageRepo, commitErr error, pipelineStatuses ...domain.PipelineStatus) WithinTx {
+	pipelineStatus := domain.PipelineEnabled
+	if len(pipelineStatuses) > 0 {
+		pipelineStatus = pipelineStatuses[0]
+	}
 	return func(ctx context.Context, fn func(Repositories) error) error {
 		repos := Repositories{
 			Projects:  projectRepo{project: domain.Project{ID: projectID, Slug: "demo", Name: "Demo", Status: domain.ProjectActive}},
 			Agents:    agentRepo{agent: domain.Agent{ID: agentID, ProjectID: projectID, Name: "agent", Hostname: "host", Status: domain.AgentActive}},
-			Pipelines: pipelineRepo{pipeline: domain.Pipeline{ID: pipelineID, ProjectID: projectID, AgentID: agentID, Name: "pipe", Service: "api", Config: []byte(`{}`), ConfigVersion: 1, Status: domain.PipelineEnabled, ReportedStatus: domain.PipelineRunning}},
+			Pipelines: pipelineRepo{pipeline: domain.Pipeline{ID: pipelineID, ProjectID: projectID, AgentID: agentID, Name: "pipe", Service: "api", Config: []byte(`{}`), ConfigVersion: 1, Status: pipelineStatus, ReportedStatus: domain.PipelineRunning}},
 			Batches:   batches, Usage: usage,
 		}
 		if err := fn(repos); err != nil {

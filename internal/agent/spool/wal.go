@@ -262,6 +262,20 @@ func (w *WAL) Pending() []Commit {
 	return result
 }
 
+// Peek returns the oldest pending batch without copying the entire queue.
+// Dispatcher uses this on the normal path; a full Pending scan is reserved
+// for temporarily blocked batches that need fair delivery.
+func (w *WAL) Peek() (Commit, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, id := range w.order {
+		if commit, exists := w.pending[id]; exists {
+			return cloneCommit(commit), true
+		}
+	}
+	return Commit{}, false
+}
+
 func (w *WAL) Quarantined() []Quarantined {
 	w.mu.Lock()
 	defer w.mu.Unlock()

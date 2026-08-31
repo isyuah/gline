@@ -14,19 +14,20 @@ import (
 )
 
 type HeartbeatPipeline struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID            string  `json:"id"`
+	ConfigVersion int64   `json:"config_version"`
+	Status        string  `json:"status"`
+	LastError     *string `json:"last_error,omitempty"`
 }
 
 type HTTPHeartbeat struct {
-	endpoint  string
-	token     string
-	version   string
-	pipelines []HeartbeatPipeline
-	client    HTTPDoer
+	endpoint string
+	token    string
+	version  string
+	client   HTTPDoer
 }
 
-func NewHTTPHeartbeat(endpoint, token, version string, pipelineIDs []string, client HTTPDoer) (*HTTPHeartbeat, error) {
+func NewHTTPHeartbeat(endpoint, token, version string, client HTTPDoer) (*HTTPHeartbeat, error) {
 	if strings.TrimSpace(endpoint) == "" || strings.TrimSpace(token) == "" {
 		return nil, errors.New("heartbeat endpoint and token are required")
 	}
@@ -37,42 +38,44 @@ func NewHTTPHeartbeat(endpoint, token, version string, pipelineIDs []string, cli
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	pipelines := make([]HeartbeatPipeline, len(pipelineIDs))
-	for index, id := range pipelineIDs {
-		if strings.TrimSpace(id) == "" {
-			return nil, errors.New("heartbeat pipeline id is empty")
-		}
-		pipelines[index] = HeartbeatPipeline{ID: id, Status: "running"}
-	}
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
 	}
-	return &HTTPHeartbeat{endpoint: parsed.String(), token: token, version: version, pipelines: pipelines, client: client}, nil
+	return &HTTPHeartbeat{endpoint: parsed.String(), token: token, version: version, client: client}, nil
 }
 
-func (h *HTTPHeartbeat) Report(ctx context.Context) error {
+func (h *HTTPHeartbeat) Report(ctx context.Context, pipelines []HeartbeatPipeline) (ControlSnapshot, error) {
 	body, err := json.Marshal(struct {
 		Version   string              `json:"version"`
 		Pipelines []HeartbeatPipeline `json:"pipelines"`
-	}{Version: h.version, Pipelines: h.pipelines})
+	}{Version: h.version, Pipelines: pipelines})
 	if err != nil {
-		return err
+		return ControlSnapshot{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, h.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create heartbeat request: %w", err)
+		return ControlSnapshot{}, fmt.Errorf("create heartbeat request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+h.token)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := h.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("send heartbeat: %w", err)
+		return ControlSnapshot{}, fmt.Errorf("send heartbeat: %w", err)
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("heartbeat returned HTTP %d", response.StatusCode)
+	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if readErr != nil {
+		return ControlSnapshot{}, fmt.Errorf("read heartbeat response: %w", readErr)
 	}
-	return nil
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return ControlSnapshot{}, fmt.Errorf("heartbeat returned HTTP %d", response.StatusCode)
+	}
+	var envelope struct {
+		Control ControlSnapshot `json:"control"`
+	}
+	if err := json.Unmarshal(responseBody, &envelope); err != nil {
+		return ControlSnapshot{}, fmt.Errorf("decode heartbeat response: %w", err)
+	}
+	return envelope.Control, nil
 }

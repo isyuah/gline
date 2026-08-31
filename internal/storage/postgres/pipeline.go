@@ -59,6 +59,30 @@ ORDER BY updated_at DESC, id DESC LIMIT $2`, projectID, limit)
 	return pipelines, classifyError(rows.Err())
 }
 
+func (r *PipelineRepository) ListByAgent(ctx context.Context, projectID domain.ProjectID, agentID domain.AgentID, limit int) ([]domain.Pipeline, error) {
+	if !projectID.Valid() || !agentID.Valid() || limit <= 0 || limit > 1000 {
+		return nil, fmt.Errorf("%w: agent pipeline list", domain.ErrInvalid)
+	}
+	rows, err := r.q.QueryContext(ctx, `
+SELECT id, project_id, agent_id, name, service, config, config_version,
+       status, reported_status, reported_at, last_error, updated_at
+FROM pipelines WHERE project_id = $1 AND agent_id = $2
+ORDER BY id LIMIT $3`, projectID, agentID, limit)
+	if err != nil {
+		return nil, classifyError(err)
+	}
+	defer rows.Close()
+	pipelines := make([]domain.Pipeline, 0)
+	for rows.Next() {
+		pipeline, err := scanPipeline(rows)
+		if err != nil {
+			return nil, err
+		}
+		pipelines = append(pipelines, pipeline)
+	}
+	return pipelines, classifyError(rows.Err())
+}
+
 func (r *PipelineRepository) UpdateConfig(ctx context.Context, projectID domain.ProjectID, pipelineID domain.PipelineID, expectedVersion int64, config json.RawMessage) (domain.Pipeline, error) {
 	if expectedVersion <= 0 || !domain.ValidJSONObject(config) {
 		return domain.Pipeline{}, fmt.Errorf("%w: pipeline config", domain.ErrInvalid)

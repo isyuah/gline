@@ -15,7 +15,7 @@ collection of unused infrastructure.
 ## What Is Implemented
 
 - Project isolation and scoped API keys whose plaintext is shown only once.
-- Agent registration, heartbeat status and versioned Pipeline configuration.
+- Agent registration, bidirectional heartbeat control and versioned Pipeline configuration.
 - Strict versioned batch protocol, bounded requests and transactional
   idempotency on `(project_id, batch_id)` plus a canonical payload hash.
 - PostgreSQL migrations, composite tenant foreign keys, usage buckets and audit
@@ -63,6 +63,16 @@ bodies cannot select another tenant. An ingest ACK is emitted only after the
 PostgreSQL transaction commits; a retry after a lost response therefore returns
 `duplicate` instead of duplicating entries.
 
+Pipeline control has two deliberately separate states. The Server stores the
+desired state (`enabled`, `paused`, `disabled`) and the Agent reports its
+observed state (`running`, `stopped`, `error`) through heartbeat. A paused
+Pipeline stops reading new file records after the next heartbeat but already
+durable WAL batches are still accepted and drained. A disabled Pipeline keeps
+its batches pending and the Dispatcher continues unrelated Pipeline batches;
+re-enabling it resumes delivery. If the Server config version differs from the
+local `config_version`, the Agent stops reading that Pipeline and reports an
+explicit error until the local configuration is deployed.
+
 ## Run With Docker Compose
 
 Prerequisites: Docker Desktop with Compose v2.
@@ -99,7 +109,8 @@ The intended first workflow is:
 3. Create an API key with `ingest` and `agent:write` scopes. Store the one-time
    secret securely.
 4. Copy `examples/glineconf.yaml` to an ignored local file and replace the Agent
-   ID, Pipeline ID and API key. If `.env` overrides `GLINE_HTTP_PORT`, update
+   ID, Pipeline ID, matching Pipeline `config_version` and API key. If `.env`
+   overrides `GLINE_HTTP_PORT`, update
    the Agent destination URL to that published port as well (this worktree uses
    `18080` because host port `8080` is already occupied).
 5. Create `data/demo-api.log`, start the Agent, then append lines to the file.
@@ -149,6 +160,11 @@ loopback host; omit it to disable this listener. Its gauges are calculated from
 the recovered WAL state, so a process restart does not reset the visible
 backlog.
 
+The older in-memory `tick_or_batch` sender and `terminal` destination remain
+only for local parser/sender experiments. They do not provide the reliable
+checkpoint, WAL or commit-after-ACK guarantees described above and are not the
+production or resume-demo path.
+
 Ingest admission is configured with `GLINE_INGEST_REQUESTS_PER_MINUTE`,
 `GLINE_INGEST_ENTRIES_PER_MINUTE`, `GLINE_INGEST_BYTES_PER_MINUTE` and
 `GLINE_INGEST_MAX_INFLIGHT`. A 429 response includes `Retry-After`; the Agent
@@ -165,6 +181,19 @@ current synchronous ingest path returns an error and leaves the Agent copy
 authoritative instead of weakening commit-after-ACK semantics.
 
 ## Standalone Deployment
+
+### Local Release Artifacts
+
+To produce reproducible local artifacts without publishing them:
+
+```powershell
+.\scripts\build-release.ps1 -Version 0.1.0
+Get-Content dist\release\SHA256SUMS
+```
+
+The script builds CGO-free Windows and Linux amd64 Agent/Server binaries with
+`-trimpath`, injects the Server version and writes a SHA-256 manifest. It does
+not create Git tags, push branches or upload releases.
 
 Compose is the recommended local acceptance topology, but every runtime piece
 can be deployed independently. The Server is a stateless Go process once
@@ -261,6 +290,11 @@ go test -tags=integration ./... -count=1 -v
 Do not point this test at a database containing useful data.
 
 ## Documentation
+
+第一次运行和验收请先看
+[`docs/acceptance-and-usage.md`](docs/acceptance-and-usage.md)。它按 Windows
+PowerShell 给出从 Compose、控制台建模、Agent 启动到故障恢复的完整步骤，并标出
+自动化验证和人工验收的边界。
 
 The implementation-oriented backend course starts at
 [`docs/backend-tutorial/README.md`](docs/backend-tutorial/README.md). It explains

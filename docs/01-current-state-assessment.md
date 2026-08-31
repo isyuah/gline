@@ -1,5 +1,9 @@
 # 01. Gline 现状评估
 
+> 历史评估文档：本文记录可靠 Agent 和模块化 Server 实现之前的原型差距。
+> 当前实现与验收证据以根目录 `README.md`、`STATUS.md` 及 `docs/backend-tutorial/`
+> 为准。
+
 ## 1. 审计范围
 
 本结论基于 2026-08-23 的本地工作树，而不只基于 `HEAD`：

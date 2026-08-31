@@ -1,5 +1,33 @@
 # Gline Development Log
 
+## 2026-08-31 - Agent control and recovery hardening
+
+- Added a bidirectional heartbeat contract. The Agent sends observed Pipeline
+  status, error summary and local `config_version`; the Server returns desired
+  status and the authoritative config version for that Agent.
+- Added an Agent-side control gate. `paused` stops new file reads while durable
+  batches drain, `disabled` preserves pending data, and a config-version drift
+  reports an explicit error instead of silently running stale configuration.
+- Isolated Pipeline source failures so one broken file does not cancel the
+  entire Agent. Dispatcher delivery now skips temporarily unavailable batches
+  so unrelated Pipelines can continue without losing ordering within a batch.
+- Changed Server ingest semantics so paused Pipelines accept their already
+  durable backlog; disabled/error Pipelines remain hard boundaries. Idempotency
+  conflicts now use `idempotency_conflict`, separate from resource state.
+- Added a real PostgreSQL-backed integration test with a toggled 503 outage. It
+  verified file -> WAL -> recovery -> committed query results and WAL drain.
+- Removed unused pre-reliable Server upload/sink prototype packages. Historical
+  architecture material is labeled as historical; the backend tutorial and
+  root README describe the current boundary.
+- Kept the Agent's in-memory sender/terminal path only as an explicitly
+  documented development compatibility mode; the reliable WAL path remains the
+  supported production and resume-demo path.
+- Added the WAL `Commit`/`Ack` fsync benchmark and optimized the normal
+  dispatcher queue read to avoid copying all pending payloads every iteration.
+- Added a local release script for Windows/Linux Agent/Server binaries with
+  trimpath, Server version injection and SHA-256 output; no tag or publication
+  was performed.
+
 ## 2026-08-28 - Compose runtime acceptance slice
 
 - Verified Docker Engine 28.5.1 and Docker Compose v2.40.2 in the isolated
@@ -133,3 +161,15 @@
   request cancellation and database execution deadlines remain distinct. Query
   deadline failures now expose stable 504 `query_timeout` instead of a generic
   internal error.
+
+## 2026-08-31 - Acceptance guide and handoff
+
+- Added `docs/acceptance-and-usage.md` with the first-run Compose workflow,
+  console resource creation order, Agent configuration, manual acceptance
+  checklist, outage recovery, Pipeline control, troubleshooting and cleanup.
+- Recorded the current Go code-size baseline: 122 files and 15,505 physical
+  lines, including 87 production files / 10,255 lines and 35 test files /
+  5,250 lines.
+- Documented a staged reading strategy: first run the end-to-end flow, then
+  read the architecture and core Agent/Server paths, and use focused module
+  walkthroughs where needed.

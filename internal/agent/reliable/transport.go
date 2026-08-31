@@ -21,6 +21,7 @@ const (
 	ResultRetryable
 	ResultQuarantine
 	ResultTerminal
+	ResultBlocked
 )
 
 type SendResult struct {
@@ -124,6 +125,10 @@ func (t *HTTPTransport) Send(ctx context.Context, payload []byte) (SendResult, e
 		response.StatusCode == http.StatusTooManyRequests,
 		response.StatusCode >= 500:
 		result.Class = ResultRetryable
+	case response.StatusCode == http.StatusConflict && result.Code == "resource_unavailable":
+		// This is operator-controlled state, not a malformed immutable batch.
+		// Keep the batch pending while allowing unrelated pipelines to drain.
+		result.Class = ResultBlocked
 	case response.StatusCode == http.StatusBadRequest,
 		response.StatusCode == http.StatusConflict,
 		response.StatusCode == http.StatusRequestEntityTooLarge,

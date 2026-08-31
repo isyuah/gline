@@ -13,6 +13,8 @@ agent:
 pipelines:
   - # Replace this with the Pipeline ID created in the Gline console.
     id: 33333333-3333-4333-8333-333333333333
+    # Must match the Pipeline config_version shown by the Server.
+    config_version: 1
     service: demo-api
     host: local-dev
     source:

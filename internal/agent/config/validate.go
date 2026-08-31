@@ -31,6 +31,9 @@ func (cfg GlineAgentConfig) Validate() error {
 		if strings.TrimSpace(pipeline.Service) == "" {
 			return fmt.Errorf("pipeline[%d] service is empty", i)
 		}
+		if pipeline.ConfigVersion < 0 {
+			return fmt.Errorf("pipeline[%d] config_version cannot be negative", i)
+		}
 		if strings.TrimSpace(pipeline.Source.Type) == "" {
 			return fmt.Errorf("pipeline[%d] source type is empty", i)
 		}

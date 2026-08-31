@@ -16,11 +16,12 @@ import (
 )
 
 type Pipeline struct {
-	ID      string
-	Source  *source.DurableFileSource
-	Parser  parser.Parser
-	Service string
-	Host    string
+	ID            string
+	ConfigVersion int64
+	Source        *source.DurableFileSource
+	Parser        parser.Parser
+	Service       string
+	Host          string
 }
 
 type AgentOptions struct {
@@ -30,7 +31,7 @@ type AgentOptions struct {
 }
 
 type HeartbeatReporter interface {
-	Report(context.Context) error
+	Report(context.Context, []HeartbeatPipeline) (ControlSnapshot, error)
 }
 
 type Agent struct {
@@ -40,6 +41,7 @@ type Agent struct {
 	Spool      *spool.WAL
 	Dispatcher *Dispatcher
 	Heartbeat  HeartbeatReporter
+	State      *PipelineState
 	Options    AgentOptions
 	Observer   AgentObserver
 	Operations *http.Server
@@ -65,6 +67,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.Options.HeartbeatInterval <= 0 {
 		a.Options.HeartbeatInterval = 30 * time.Second
 	}
+	if a.State == nil {
+		state, err := NewPipelineState(a.Pipelines)
+		if err != nil {
+			return err
+		}
+		a.State = state
+	}
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -82,18 +91,21 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.runHeartbeat(runCtx)
 	}()
 
-	pipelineErrors := make(chan error, len(a.Pipelines))
 	var pipelineWait sync.WaitGroup
 	for index := range a.Pipelines {
 		pipeline := &a.Pipelines[index]
 		pipelineWait.Go(func() {
 			logger := a.Logger.With().Str("component", "reliable_pipeline").Str("pipeline", pipeline.ID).Logger()
+			a.State.Start(pipeline.ID)
+			a.syncObserverState()
 			if err := a.runPipeline(runCtx, logger, pipeline); err != nil && !errors.Is(err, context.Canceled) {
-				select {
-				case pipelineErrors <- err:
-				default:
-				}
+				a.State.Fail(pipeline.ID, err)
+				a.syncObserverState()
+				logger.Error().Err(err).Msg("pipeline stopped after an isolated failure")
+				return
 			}
+			a.State.Stop(pipeline.ID)
+			a.syncObserverState()
 		})
 	}
 
@@ -104,8 +116,6 @@ func (a *Agent) Run(ctx context.Context) error {
 		cause = ctx.Err()
 	case err := <-dispatcherDone:
 		dispatcherFinished = true
-		cause = err
-	case err := <-pipelineErrors:
 		cause = err
 	case err := <-operationsDone:
 		operationsFinished = true
@@ -141,8 +151,15 @@ func (a *Agent) runHeartbeat(ctx context.Context) {
 	ticker := time.NewTicker(a.Options.HeartbeatInterval)
 	defer ticker.Stop()
 	for {
-		if err := a.Heartbeat.Report(ctx); err != nil && ctx.Err() == nil {
+		snapshot, err := a.Heartbeat.Report(ctx, a.State.Reports())
+		if err != nil && ctx.Err() == nil {
 			a.Logger.Warn().Err(err).Msg("agent heartbeat failed")
+		} else if err == nil {
+			if applyErr := a.State.Apply(snapshot); applyErr != nil {
+				a.Logger.Warn().Err(applyErr).Msg("agent heartbeat returned invalid control state")
+			} else {
+				a.syncObserverState()
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -154,10 +171,6 @@ func (a *Agent) runHeartbeat(ctx context.Context) {
 
 func (a *Agent) runPipeline(ctx context.Context, logger zerolog.Logger, pipeline *Pipeline) error {
 	defer pipeline.Source.Close()
-	if a.Observer != nil {
-		a.Observer.SetPipelineUp(pipeline.ID, true)
-		defer a.Observer.SetPipelineUp(pipeline.ID, false)
-	}
 	ticker := time.NewTicker(a.Options.FlushInterval)
 	defer ticker.Stop()
 	records := make(chan source.RawRecord)
@@ -165,8 +178,16 @@ func (a *Agent) runPipeline(ctx context.Context, logger zerolog.Logger, pipeline
 	startSource := func() {
 		go func() {
 			for {
+				if err := a.State.WaitUntilRunnable(ctx, pipeline.ID); err != nil {
+					sourceDone <- err
+					return
+				}
 				record, err := pipeline.Source.NextRecord(ctx)
 				if err != nil {
+					sourceDone <- err
+					return
+				}
+				if err := a.State.WaitUntilRunnable(ctx, pipeline.ID); err != nil {
 					sourceDone <- err
 					return
 				}
@@ -273,5 +294,14 @@ func (a *Agent) runPipeline(ctx context.Context, logger zerolog.Logger, pipeline
 				}
 			}
 		}
+	}
+}
+
+func (a *Agent) syncObserverState() {
+	if a.Observer == nil || a.State == nil {
+		return
+	}
+	for _, report := range a.State.Reports() {
+		a.Observer.SetPipelineUp(report.ID, report.Status == "running")
 	}
 }

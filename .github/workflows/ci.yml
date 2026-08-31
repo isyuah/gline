@@ -79,6 +79,25 @@ jobs:
       - name: Run tests with race detector
         run: go test -race ./... -count=1
 
+  benchmark:
+    name: Durable Agent baseline benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run durable WAL baseline
+        run: go test ./internal/agent/spool -run '^$' -bench BenchmarkWALCommitAck -benchtime=10x -count=1
+
   postgres-integration:
     name: PostgreSQL integration tests
     runs-on: ubuntu-24.04

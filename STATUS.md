@@ -1,6 +1,6 @@
 # Gline Implementation Status
 
-Updated: 2026-08-28
+Updated: 2026-08-31
 
 ## Current Stable Boundary
 
@@ -21,7 +21,8 @@ Updated: 2026-08-28
   `(project_id, batch_id)` plus a canonical payload hash for retry semantics.
 - The reliable Agent persists file checkpoints and batches in a bounded CRC WAL,
   recovers truncated tails, survives Windows rename/recreate and copy-truncate
-  rotation, retries temporary delivery failures and reports heartbeats. A 2xx
+  rotation, retries temporary delivery failures, reconciles heartbeat control
+  state and reports observed Pipeline status. A 2xx
   response only releases a batch when its ACK contains the exact same batch ID.
 - Immutable per-batch failures are durably moved to Agent-local quarantine so
   later batches can proceed; operators can list metadata or explicitly discard
@@ -83,9 +84,23 @@ Updated: 2026-08-28
   quarantine and discard, continuation after a bad batch, systemic stop with a
   pending batch, and offline rename/recreate epoch transition.
 - The tagged PostgreSQL suite builds, including a full HTTP -> authentication ->
-  Control -> Ingest -> Query -> PostgreSQL workflow. Both database-backed cases
-  explicitly report `SKIP` locally because `GLINE_TEST_DATABASE_URL` is unset;
-  CI is configured to run them against PostgreSQL 17.
+  Control -> Ingest -> Query -> PostgreSQL workflow. CI is configured to run the
+  database-backed cases against PostgreSQL 17.
+- The real PostgreSQL Agent recovery case has now been executed locally against
+  PostgreSQL 17: file -> Agent WAL -> temporary HTTP outage -> Server -> Query
+  recovered both messages and cleared the WAL. The test creates and drops only
+  its own random schema.
+- Pipeline control regression coverage verifies desired status/config-version
+  reconciliation, paused backlog draining, disabled-batch preservation, fair
+  delivery around blocked batches and isolation of one Pipeline failure.
+- `internal/agent/spool/wal_benchmark_test.go` provides a durable `Commit` plus
+  `Ack` baseline that includes WAL fsyncs. It is a measurement harness, not a
+  performance claim independent of the recorded machine and filesystem.
+- `scripts/build-release.ps1` produces four local CGO-free amd64 artifacts and
+  a SHA-256 manifest without publishing or modifying Git history.
+- `docs/acceptance-and-usage.md` provides a first-run guide, manual acceptance
+  checklist, recovery/control scenarios, troubleshooting, and a staged code
+  reading path with the current Go line-count statistics.
 - Secret and local absolute module replacement review: no committed credential
   found; the obsolete `E:/Proj/testx` replacement was removed.
 - The GitHub Actions workflow was locally reviewed and its commands were run in
@@ -93,19 +108,28 @@ Updated: 2026-08-28
 
 ## Remaining Acceptance Work
 
-- The tagged PostgreSQL suite is still opt-in and has not been pointed at a
-  disposable test database in this worktree. The Compose smoke covers the
-  production-shaped HTTP-to-PostgreSQL path; CI remains the authoritative
-  isolated integration run.
+- The tagged PostgreSQL suite remains opt-in by design; the local Agent recovery
+  case has been run against the Compose PostgreSQL instance, while CI remains
+  the authoritative isolated integration run.
 - The browser workflow remains to be manually accepted by the user. Automated
   checks establish that the Web bundle is served and its same-origin API proxy
   is reachable; they do not claim visual or interaction acceptance.
+
+## 2026-08-31 Documentation and handoff
+
+- Added the Chinese first-run and acceptance guide for a developer who has not
+  used Gline before.
+- Counted 122 Go files and 15,505 physical lines: 87 production files and
+  10,255 production lines, plus 35 test files and 5,250 test lines.
+- The recommended learning path is hybrid: run one end-to-end flow first,
+  read the architecture map and core Agent/Server path, then request focused
+  module walkthroughs instead of generating a function-by-function manual.
 
 ## Evidence Levels
 
 | Area | Implemented | Verified | Integrated | Runnable | Accepted |
 | --- | --- | --- | --- | --- | --- |
-| Reliable Agent | yes | yes | protocol-level | blocked by Server runtime | no |
+| Reliable Agent | yes | yes | file-to-PostgreSQL recovery | yes (local + Compose) | no |
 | Control plane | yes | yes | yes | yes (Compose) | no |
 | PostgreSQL ingest/query | yes | unit/race/tag-build + Compose smoke | yes | yes (Compose) | no |
 | Operations and maintenance | yes | yes | yes | yes (Compose) | no |

@@ -80,8 +80,12 @@ func ReliableAgent(cfg config.GlineAgentConfig, logger zerolog.Logger) (agent.Ru
 			_ = fileSource.Close()
 			return closeOnError(err, pipelines)
 		}
+		configVersion := pipelineConfig.ConfigVersion
+		if configVersion == 0 {
+			configVersion = 1
+		}
 		pipelines = append(pipelines, reliable.Pipeline{
-			ID: pipelineConfig.ID, Source: fileSource, Parser: entryParser,
+			ID: pipelineConfig.ID, ConfigVersion: configVersion, Source: fileSource, Parser: entryParser,
 			Service: pipelineConfig.Service, Host: pipelineConfig.Host,
 		})
 	}
@@ -103,11 +107,7 @@ func ReliableAgent(cfg config.GlineAgentConfig, logger zerolog.Logger) (agent.Ru
 		parsed.Path = strings.TrimSuffix(strings.TrimRight(parsed.Path, "/"), "/batches") + "/agents/" + url.PathEscape(cfg.Agent.ID) + "/heartbeat"
 		heartbeatURL = parsed.String()
 	}
-	pipelineIDs := make([]string, len(pipelines))
-	for index := range pipelines {
-		pipelineIDs[index] = pipelines[index].ID
-	}
-	heartbeat, err := reliable.NewHTTPHeartbeat(heartbeatURL, destinationParams.Token, cfg.Agent.Version, pipelineIDs, nil)
+	heartbeat, err := reliable.NewHTTPHeartbeat(heartbeatURL, destinationParams.Token, cfg.Agent.Version, nil)
 	if err != nil {
 		return closeOnError(err, pipelines)
 	}
@@ -140,9 +140,13 @@ func ReliableAgent(cfg config.GlineAgentConfig, logger zerolog.Logger) (agent.Ru
 	if err != nil {
 		return closeOnError(err, pipelines)
 	}
+	state, err := reliable.NewPipelineState(pipelines)
+	if err != nil {
+		return closeOnError(err, pipelines)
+	}
 	result := &reliable.Agent{
 		Logger: logger, AgentID: cfg.Agent.ID, Pipelines: pipelines,
-		Spool: store, Dispatcher: dispatcher, Heartbeat: heartbeat,
+		Spool: store, Dispatcher: dispatcher, Heartbeat: heartbeat, State: state,
 		Operations: operations,
 		Options:    reliable.AgentOptions{BatchSize: senderParams.BatchSize, FlushInterval: senderParams.FlushInterval, HeartbeatInterval: senderParams.HeartbeatInterval},
 	}

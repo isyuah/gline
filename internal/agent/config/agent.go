@@ -32,9 +32,10 @@ type PipelineParserConfig struct {
 }
 
 type PipelineConfig struct {
-	ID      string `yaml:"id"`
-	Service string `yaml:"service"`
-	Host    string `yaml:"host"`
+	ID            string `yaml:"id"`
+	ConfigVersion int64  `yaml:"config_version"`
+	Service       string `yaml:"service"`
+	Host          string `yaml:"host"`
 
 	Source PipelineSourceConfig `yaml:"source"`
 	Parser PipelineParserConfig `yaml:"parser"`

@@ -182,7 +182,10 @@ func (s *Service) Accept(ctx context.Context, principal serverauth.Principal, ca
 		if pipeline.AgentID != batch.AgentID {
 			return fmt.Errorf("%w: pipeline agent", domain.ErrInvalid)
 		}
-		if pipeline.Status != domain.PipelineEnabled {
+		// Pausing stops new source reads through heartbeat control, but already
+		// durable batches must still drain. Disabled and errored pipelines remain
+		// hard ingest boundaries.
+		if pipeline.Status != domain.PipelineEnabled && pipeline.Status != domain.PipelinePaused {
 			return ErrPipelineUnavailable
 		}
 

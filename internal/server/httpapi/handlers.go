@@ -235,9 +235,10 @@ func (h *Handler) heartbeat(c *gin.Context) {
 	var request struct {
 		Version   string `json:"version"`
 		Pipelines []struct {
-			ID        domain.PipelineID             `json:"id"`
-			Status    domain.ReportedPipelineStatus `json:"status"`
-			LastError *string                       `json:"last_error"`
+			ID            domain.PipelineID             `json:"id"`
+			ConfigVersion int64                         `json:"config_version"`
+			Status        domain.ReportedPipelineStatus `json:"status"`
+			LastError     *string                       `json:"last_error"`
 		} `json:"pipelines"`
 	}
 	if err := decodeJSON(c, h.config.MaxJSONBytes, &request); err != nil {
@@ -246,9 +247,9 @@ func (h *Handler) heartbeat(c *gin.Context) {
 	}
 	reports := make([]control.PipelineReport, len(request.Pipelines))
 	for index, report := range request.Pipelines {
-		reports[index] = control.PipelineReport{ID: report.ID, Status: report.Status, LastError: report.LastError}
+		reports[index] = control.PipelineReport{ID: report.ID, ConfigVersion: report.ConfigVersion, Status: report.Status, LastError: report.LastError}
 	}
-	agent, err := h.deps.Control.Heartbeat(c.Request.Context(), p, control.HeartbeatInput{
+	result, err := h.deps.Control.Heartbeat(c.Request.Context(), p, control.HeartbeatInput{
 		ProjectID: p.ProjectID, AgentID: agentID, Version: request.Version,
 		IP: net.ParseIP(c.RemoteIP()), Pipelines: reports,
 	})
@@ -256,7 +257,16 @@ func (h *Handler) heartbeat(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"agent": agentResponse(agent)})
+	pipelines := make([]gin.H, len(result.Pipelines))
+	for index, pipeline := range result.Pipelines {
+		pipelines[index] = gin.H{
+			"id": pipeline.ID, "desired_status": pipeline.DesiredStatus, "config_version": pipeline.ConfigVersion,
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"agent":   agentResponse(result.Agent),
+		"control": gin.H{"pipelines": pipelines},
+	})
 }
 
 func (h *Handler) listPipelines(c *gin.Context) {

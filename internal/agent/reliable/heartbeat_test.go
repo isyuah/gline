@@ -25,20 +25,24 @@ func TestHTTPHeartbeatReportsPipelineStateAndAuthorization(t *testing.T) {
 		}
 		received <- body
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"agent":{"status":"active"}}`))
+		_, _ = writer.Write([]byte(`{"agent":{"status":"active"},"control":{"pipelines":[{"id":"pipe-1","desired_status":"paused","config_version":2}]}}`))
 	}))
 	defer server.Close()
 
-	reporter, err := NewHTTPHeartbeat(server.URL, "agent-secret", "0.1.0", []string{"pipe-1"}, server.Client())
+	reporter, err := NewHTTPHeartbeat(server.URL, "agent-secret", "0.1.0", server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reporter.Report(t.Context()); err != nil {
+	snapshot, err := reporter.Report(t.Context(), []HeartbeatPipeline{{ID: "pipe-1", ConfigVersion: 1, Status: "error", LastError: pointerTo("source failed")}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	body := <-received
-	if body.Version != "0.1.0" || len(body.Pipelines) != 1 || body.Pipelines[0].ID != "pipe-1" || body.Pipelines[0].Status != "running" {
+	if body.Version != "0.1.0" || len(body.Pipelines) != 1 || body.Pipelines[0].ID != "pipe-1" || body.Pipelines[0].ConfigVersion != 1 || body.Pipelines[0].Status != "error" || body.Pipelines[0].LastError == nil {
 		t.Fatalf("heartbeat body = %+v", body)
+	}
+	if len(snapshot.Pipelines) != 1 || snapshot.Pipelines[0].DesiredStatus != "paused" || snapshot.Pipelines[0].ConfigVersion != 2 {
+		t.Fatalf("heartbeat control = %+v", snapshot)
 	}
 }
 
@@ -47,11 +51,13 @@ func TestHTTPHeartbeatRejectsNonSuccess(t *testing.T) {
 		http.Error(writer, "forbidden", http.StatusForbidden)
 	}))
 	defer server.Close()
-	reporter, err := NewHTTPHeartbeat(server.URL, "agent-secret", "dev", nil, server.Client())
+	reporter, err := NewHTTPHeartbeat(server.URL, "agent-secret", "dev", server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reporter.Report(t.Context()); err == nil {
+	if _, err := reporter.Report(t.Context(), nil); err == nil {
 		t.Fatal("Report() error = nil, want HTTP failure")
 	}
 }
+
+func pointerTo(value string) *string { return &value }

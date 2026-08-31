@@ -36,10 +36,8 @@ func (r *APIKeyRepository) FindActiveByPrefix(ctx context.Context, prefix string
 SELECT k.id, k.project_id, k.agent_id, k.name, k.prefix, k.secret_hash,
        array_to_json(k.scopes), k.status, k.expires_at, k.last_used_at, k.created_at, k.revoked_at
 FROM api_keys k
-JOIN projects p ON p.id = k.project_id
 WHERE k.prefix = $1 AND k.status = 'active'
-  AND (k.expires_at IS NULL OR k.expires_at > $2)
-  AND p.status = 'active'`, prefix, now)
+  AND (k.expires_at IS NULL OR k.expires_at > $2)`, prefix, now)
 	if err != nil {
 		return nil, classifyError(err)
 	}
